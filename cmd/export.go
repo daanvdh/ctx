@@ -45,7 +45,7 @@ func Export(args []string) int {
 
 	for _, key := range keys(resolved) {
 		value := singleQuote(resolved[key])
-		fmt.Printf("%s=%s\n", key, value)
+		fmt.Printf("export %s=%s\n", key, value)
 	}
 
 	return 0
