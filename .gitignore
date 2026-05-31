@@ -1,4 +1,6 @@
+ctx 
 ctx.json
 ctx.json.lock
 bin/
 *.tmp
+.idea
