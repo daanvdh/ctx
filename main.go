@@ -16,6 +16,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  get <session> <key>  Get a key from a session\n")
 		fmt.Fprintf(os.Stderr, "  export <session>  Export all visible keys\n")
 		fmt.Fprintf(os.Stderr, "  tree            Show the session tree\n")
+	fmt.Fprintf(os.Stderr, "  path            Show the path to ctx.json\n")
 		os.Exit(1)
 	}
 
@@ -34,6 +35,8 @@ func main() {
 		exitCode = cmd.Export(args)
 	case "tree":
 		exitCode = cmd.Tree(args)
+	case "path":
+		exitCode = cmd.Path(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		os.Exit(1)
