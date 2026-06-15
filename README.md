@@ -5,6 +5,10 @@ A scoped, hierarchical key-value store for passing context between orchestrator 
 ## Installation
 
 ```bash
+
+# Install Go
+brew install go
+
 # Clone and build
 git clone <repo>
 cd ctx
