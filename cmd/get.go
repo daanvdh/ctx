@@ -41,6 +41,6 @@ func Get(args []string) int {
 		return 1
 	}
 
-	fmt.Print(value)
+	fmt.Println(value)
 	return 0
 }
