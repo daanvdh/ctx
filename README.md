@@ -2,6 +2,16 @@
 
 A scoped, hierarchical key-value store for passing context between orchestrator agents and subagents in multi-agent LLM workflows. It enables models to never handle IDs or structured data directly — the orchestrator writes all context before spawning, and subagents receive one opaque session ID.
 
+## Available Functions
+
+| Function | Description |
+|----------|-------------------|
+| `ctx new [parent_session_id]` | Create a new session (optionally as child of given parent). |
+| `ctx set <session_id> <key> <value>` | Store a value under a key in the specified session. |
+| `ctx get <session_id> <key>` | Retrieve a value for a key, searching up the parent chain. |
+| `ctx export <session_id>` | Export all visible keys as shell-friendly assignments. |
+| `ctx tree` | Print an ASCII tree of all sessions and their data. |
+
 ## Installation
 
 ```bash
@@ -123,6 +133,12 @@ bash review.sh $CHILD
 # Inside review.sh:
 eval "$(ctx export $1)"
 # All context is loaded — models never see raw IDs
+
+# 4. Example: share a file via context and read its contents
+# Orchestrator stores the file path in a key (e.g., VAR1)
+ctx set $ROOT VAR1 "/tmp/report.txt"
+# Subagent can retrieve and display the file content
+cat "$(ctx get $1 VAR1)"
 ```
 
 ## Key Design Notes
