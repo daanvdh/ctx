@@ -1,138 +1,111 @@
 # ctx — Agent Context Manager
 
-A scoped, hierarchical key-value store for passing context between orchestrator agents and subagents in multi-agent LLM workflows. It enables models to never handle IDs or structured data directly — the orchestrator writes all context before spawning, and subagents receive one opaque session ID.
+`ctx` is a tiny command‑line tool that provides a hierarchical, key–value store for
+agent‑oriented workflows. It lets an orchestrator create *sessions* (a lightweight
+context) and attach arbitrary string data to them. Sub‑agents can inherit the
+data of their ancestors by simply receiving the session identifier.
 
-## Installation
+The entire state lives in an SQLite database (`ctx.sqlite`) which is safe for
+concurrent access, has atomic writes and does not require any external service.
+
+## Quick Install
 
 ```bash
-
-# Install Go
-brew install go
-
-# Clone and build
-git clone <repo>
+# Prerequisite: Go 1.21+ (the build requires Go 1.25)
+git clone https://github.com/daanvdh/ctx.git
 cd ctx
-make build
-
-# Move binary to PATH
-mv ./bin/ctx /usr/local/bin/ctx
-
-# Verify
-ctx --help
+make build               # compiles the binary to ./bin/ctx
+sudo mv ./bin/ctx /usr/local/bin/
 ```
 
-## Makefile Targets
-
-| Target   | Description                              |
-| -------- | ---------------------------------------- |
-| `build`  | Build the binary to `./bin/ctx`          |
-| `test`   | Run all tests (`go test ./...`)          |
-| `lint`   | Run `golangci-lint run`                  |
-| `clean`  | Remove the `./bin` directory              |
-
-## Command Reference
-
-### `ctx new [parent_session_id]`
-
-Creates a new session. Prints the new session ID to stdout.
+Or, with a single command using `go install`:
 
 ```bash
-ROOT=$(ctx new)        # creates a root session
-CHILD=$(ctx new $ROOT) # creates a child of ROOT
+go install github.com/daanvdh/ctx@latest
 ```
 
-- No parent argument: creates a root session (`parent: null`)
-- With parent: creates a child of the given session (exits 1 if parent not found)
+## Configuration
 
-### `ctx set <session_id> <key> <value>`
-
-Stores `value` under `key` in the session's data.
+- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`.
+- Set the environment variable `CTX_DB_PATH` to point to a different file,
+  e.g.:
 
 ```bash
-ctx set $SESSION PROJECT_ID "gitlab-org/myproject"
-ctx set $SESSION DISCUSSION_ID "abc123"
+export CTX_DB_PATH=/tmp/my‑ctx.db   # before running any ctx command
 ```
 
-- Requires exactly 3 args: session_id, key, value
-- Overwrites existing keys
-- Exits 1 if session not found
+## Core Commands
 
-### `ctx get <session_id> <key>`
+| Command | Synopsis | Description |
+|---|---|---|
+| `ctx new [parent]` | `ctx new`<br>`ctx new <parent-id>` | Create a new session. Without a parent the session is a root; with a parent it becomes a child of that session. Prints the newly generated 8‑character hex ID. |
+| `ctx set <session> <key> <value>` | `ctx set $SID PROJECT_ID "myproj"` | Store *value* under *key* in the specified session (overwrites existing key). |
+| `ctx get <session> <key>` | `ctx get $SID PROJECT_ID` | Retrieve a value, searching up the parent chain. Prints the value to stdout. Fails if the key cannot be found. |
+| `ctx export <session>` | `ctx export $SID` | Emit all visible keys as shell‑compatible assignments (`export KEY='VALUE'`). Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
+| `ctx tree` | `ctx tree` | Render the complete session hierarchy as an ASCII tree, showing ids and key/value pairs. |
+| `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
 
-Looks up a key walking up the parent chain (depth cap 50).
+All commands exit with status 0 on success; error details are written to **stderr**.
+
+## Example Workflow
 
 ```bash
-PROJECT=$(ctx get $SESSION PROJECT_ID)
-```
-
-- Prints the value to stdout (no newline decoration)
-- Inherits from all ancestors (closer scope wins)
-- Exits 1 if key not found anywhere in the chain
-
-### `ctx export <session_id>`
-
-Exports all visible keys as `KEY='VALUE'` lines (single-quoted, safe for eval).
-
-```bash
-eval "$(ctx export $SESSION)"
-echo $PROJECT_ID
-echo $DISCUSSION_ID
-```
-
-Or without modifying shell state:
-
-```bash
-env $(ctx export $SESSION) juni run prompt.md
-```
-
-Values are single-quoted. Internal single quotes are escaped as `'\''`.
-
-### `ctx tree`
-
-Prints an ASCII tree of all sessions in `ctx.json`.
-
-```
-abc12345
- PROJECT_ID=gitlab-org/myproject
- MR_IID=412
-├── def67890
-│     DISCUSSION_ID=abc123def456
-└── ghi12345
-     DISCUSSION_ID=xyz789abc012
-```
-
-## Usage Pattern for Agent Workflows
-
-```bash
-# 1. Orchestrator creates sessions and stores context
-ROOT=$(ctx new)
+# Orchestrator creates a root session and a child.
+ROOT=$(ctx new)               # => e.g. "5f2a1c9b"
 CHILD=$(ctx new $ROOT)
+
+# Store data in the hierarchy.
 ctx set $ROOT PROJECT_ID "gitlab-org/myproject"
 ctx set $ROOT MR_IID "412"
-ctx set $ROOT STORY_ID "PROJ-88"
 ctx set $CHILD DISCUSSION_ID "abc123def456"
 
-# 2. Export context for subagent
+# Sub‑agent can import the whole context with a single command:
 eval "$(ctx export $CHILD)"
-# Now PROJECT_ID, MR_IID, STORY_ID, and DISCUSSION_ID are all available
-# because they're visible through the parent chain
 
-# 3. Spawn subagent
-bash review.sh $CHILD
+# The variables are now available in the shell.
+echo "$PROJECT_ID"   # gitlab-org/myproject
+echo "$MR_IID"       # 412
+echo "$DISCUSSION_ID" # abc123def456
 
-# Inside review.sh:
-eval "$(ctx export $1)"
-# All context is loaded — models never see raw IDs
+# Bonus: share files via context.
+ctx set $ROOT REPORT_PATH "/tmp/report.txt"
+cat "$(ctx get $CHILD REPORT_PATH)"   # prints the file content from the child’s view
 ```
 
-## Key Design Notes
+## `ctx tree` output example
 
-- **File is always `ctx.json`** in the current working directory
-- **Auto-created** on first use — no `init` command required
-- **Safe for concurrent agents** via file locking (`flock` on macOS)
-- **Keys are case-sensitive** and never transformed — use the same casing in `ctx set` and `eval "$(ctx export $SESSION)"` calls
-- **No `--file` flag** — one file per project directory means one workspace, one context
-- **Scope chain**: key lookup walks up the parent chain (like lexical scoping in programming languages)
-- **Session IDs**: 8-character lowercase hex strings from `crypto/rand`
-- **Atomic writes**: temp file + rename on POSIX to prevent corruption
-- **Depth cap of 50 hops** prevents infinite loops from corrupted parent references
+```text
+5f2a1c9b
+ PROJECT_ID=gitlab-org/myproject
+ MR_IID=412
+├── 8e7d3a4f
+│     DISCUSSION_ID=abc123def456
+└── a1b2c3d4
+      REPORT_PATH=/tmp/report.txt
+```
+
+The tree displays sessions sorted alphabetically, with child nodes indented.
+Key/value pairs belonging to a session are listed directly beneath its ID.
+
+## Design Highlights
+
+- **SQLite backend** – guarantees atomic writes and handles concurrent reads/writes without external locking.
+- **Hierarchical lookup** – `ctx get` walks up the parent chain (max 50 hops) so children automatically inherit keys from ancestors. Later entries shadow earlier ones.
+- **Session IDs** – generated with `crypto/rand`, yielding an eight‑character lowercase hex string (`xxxxxxxx`). Collisions are extremely unlikely.
+- **Depth limit** – prevents infinite loops in corrupted data (e.g., circular parent references).
+- **Portable** – No external dependencies; the only required runtime is the SQLite driver bundled via Go modules.
+
+## Development
+
+```bash
+make test    # run unit tests
+make lint    # static analysis with golangci‑lint
+make clean   # remove ./bin
+```
+
+Contributions are welcome. Please open an issue or a pull request for bugs,
+features, or documentation improvements.
+
+---
+
+`ctx` – Simple, deterministic context handling for multi‑agent AI workflows.
