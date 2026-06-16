@@ -38,12 +38,17 @@ export CTX_DB_PATH=/tmp/my‑ctx.db   # before running any ctx command
 
 | Command | Synopsis | Description |
 |---|---|---|
-| `ctx new [parent]` | `ctx new`<br>`ctx new <parent-id>` | Create a new session. Without a parent the session is a root; with a parent it becomes a child of that session. Prints the newly generated 8‑character hex ID. |
+| `ctx new [options] [custom_id]` | `ctx new`<br>`ctx new <parent-id>`<br>`ctx new my-custom-id`<br>`ctx new my-custom-id --parent <parent-id>`<br>`ctx new --help` | Create a new session. If a custom ID is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent can be set explicitly via `--parent`, or implicitly from the `CTX_ID` environment variable if present. Use `--help` for usage information. |
 | `ctx set <session> <key> <value>` | `ctx set $SID PROJECT_ID "myproj"` | Store *value* under *key* in the specified session (overwrites existing key). |
 | `ctx get <session> <key>` | `ctx get $SID PROJECT_ID` | Retrieve a value, searching up the parent chain. Prints the value to stdout. Fails if the key cannot be found. |
 | `ctx export <session>` | `ctx export $SID` | Emit all visible keys as shell‑compatible assignments (`export KEY='VALUE'`). Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx tree` | `ctx tree` | Render the complete session hierarchy as an ASCII tree, showing ids and key/value pairs. |
 | `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
+
+
+**Note:** If `CTX_ID` is set in the environment, it will be used as the implicit parent for newly created sessions when no `--parent` flag is provided.
+
+
 
 All commands exit with status 0 on success; error details are written to **stderr**.
 
