@@ -52,7 +52,28 @@ export CTX_DB_PATH=/tmp/my‑ctx.db   # before running any ctx command
 
 All commands exit with status 0 on success; error details are written to **stderr**.
 
-## Example Workflow
+## Using implicit parent via `CTX_ID`
+
+The environment variable `CTX_ID` can be used to automatically set the parent of a new session when you do **not** specify `--parent`. This is handy in scripts:
+
+```bash
+# Create a root session and export its ID.
+ROOT=$(ctx new)               # prints e.g. "a1b2c3d4"
+export CTX_ID=$ROOT           # make it available to subsequent commands
+
+# Create a child session with a custom name; parent defaults to $CTX_ID.
+CHILD=$(ctx new review-agent)
+```
+
+If you need to override the implicit parent, use `--parent`:
+
+```bash
+export CTX_ID=$ROOT
+CHILD=$(ctx new lint-agent --parent $ROOT)   # explicit parent flag takes precedence
+```
+
+Remember to **export** the variable; otherwise it is only set for a single command and will not be visible to subsequent `ctx new` invocations.
+
 
 ```bash
 # Orchestrator creates a root session and a child.
