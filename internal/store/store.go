@@ -1,143 +1,176 @@
 package store
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
-	"syscall"
-	"time"
+    "database/sql"
+    "fmt"
+    "time"
+    "sync"
 
-	"ctx/internal/model"
+    _ "modernc.org/sqlite"
+    "ctx/internal/model"
 )
 
-const (
-	lockName       = "ctx.json.lock"
-	maxLockRetries = 50
-	lockRetryMs    = 100
-)
+var mu sync.Mutex
 
-// Load reads ctx.json from path. If the file does not exist, it creates an empty
-// ContextFile. It does not acquire a lock.
+
+// initDB opens (or creates) the SQLite database at the given path and ensures
+// that the required tables exist.
+func initDB(path string) (*sql.DB, error) {
+    db, err := sql.Open("sqlite", path)
+    if err != nil {
+        return nil, fmt.Errorf("store: open sqlite: %w", err)
+    }
+    // Set a busy timeout (ms) so SQLite will retry when the DB is locked.
+    if _, err = db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+        return nil, fmt.Errorf("store: set busy_timeout: %w", err)
+    }
+
+    // Create tables if they don't exist.
+    _, err = db.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        parent_id TEXT,
+        created_at DATETIME
+    )`)
+    if err != nil {
+        return nil, fmt.Errorf("store: create sessions table: %w", err)
+    }
+    _, err = db.Exec(`CREATE TABLE IF NOT EXISTS session_data (
+        session_id TEXT,
+        key TEXT,
+        value TEXT,
+        PRIMARY KEY (session_id, key),
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )`)
+    if err != nil {
+        return nil, fmt.Errorf("store: create session_data table: %w", err)
+    }
+    // Set a busy timeout (ms) so SQLite will retry when the DB is locked.
+    if _, err = db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+        return nil, fmt.Errorf("store: set busy_timeout: %w", err)
+    }
+    // Return the opened DB.
+    return db, nil
+
+}
+
+// Load reads all sessions from the SQLite database at path and returns a ContextFile.
 func Load(path string) (*model.ContextFile, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &model.ContextFile{Sessions: make(map[string]*model.Session)}, nil
-		}
-		return nil, fmt.Errorf("store: load: %w", err)
-	}
+    mu.Lock()
+    defer mu.Unlock()
+    db, err := initDB(path)
+    if err != nil {
+        return nil, err
+    }
+    defer db.Close()
 
-	var cf model.ContextFile
-	if err := json.Unmarshal(data, &cf); err != nil {
-		return nil, fmt.Errorf("store: load: invalid JSON: %w", err)
-	}
-	if cf.Sessions == nil {
-		cf.Sessions = make(map[string]*model.Session)
-	}
-	return &cf, nil
+    cf := &model.ContextFile{Sessions: make(map[string]*model.Session)}
+
+    // Load sessions.
+    rows, err := db.Query(`SELECT id, parent_id, created_at FROM sessions`)
+    if err != nil {
+        return nil, fmt.Errorf("store: query sessions: %w", err)
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var id string
+        var parentID sql.NullString
+        var created time.Time
+        if err := rows.Scan(&id, &parentID, &created); err != nil {
+            return nil, fmt.Errorf("store: scan session: %w", err)
+        }
+        sess := &model.Session{Created: created, Data: make(map[string]string)}
+        if parentID.Valid && parentID.String != "" {
+            pid := parentID.String
+            sess.Parent = &pid
+        }
+        cf.Sessions[id] = sess
+    }
+    if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("store: iterate sessions: %w", err)
+    }
+
+    // Load data for each session.
+    dRows, err := db.Query(`SELECT session_id, key, value FROM session_data`)
+    if err != nil {
+        return nil, fmt.Errorf("store: query session_data: %w", err)
+    }
+    defer dRows.Close()
+
+    for dRows.Next() {
+        var sid, k, v string
+        if err := dRows.Scan(&sid, &k, &v); err != nil {
+            return nil, fmt.Errorf("store: scan session_data: %w", err)
+        }
+        sess, ok := cf.Sessions[sid]
+        if !ok {
+            // Session without a row in sessions table – create placeholder.
+            sess = &model.Session{Data: make(map[string]string)}
+            cf.Sessions[sid] = sess
+        }
+        sess.Data[k] = v
+    }
+    if err := dRows.Err(); err != nil {
+        return nil, fmt.Errorf("store: iterate session_data: %w", err)
+    }
+
+    return cf, nil
 }
 
-// Save writes the ContextFile to path via a temp file + rename for atomicity.
+// Save writes the entire ContextFile to the SQLite database at path.
 func Save(path string, cf *model.ContextFile) error {
-	data, err := json.MarshalIndent(cf, "", "  ")
-	if err != nil {
-		return fmt.Errorf("store: save: marshal: %w", err)
-	}
+    mu.Lock()
+    defer mu.Unlock()
+    db, err := initDB(path)
+    if err != nil {
+        return err
+    }
+    defer db.Close()
 
-	dir := filepath.Dir(path)
-	tmpFile, err := os.CreateTemp(dir, "ctx-*.json.tmp")
-	if err != nil {
-		return fmt.Errorf("store: save: create temp: %w", err)
-	}
-	tmpPath := tmpFile.Name()
+    tx, err := db.Begin()
+    if err != nil {
+        return fmt.Errorf("store: begin transaction: %w", err)
+    }
+    // Clear existing data.
+    if _, err = tx.Exec(`DELETE FROM session_data`); err != nil {
+        tx.Rollback()
+        return fmt.Errorf("store: clear session_data: %w", err)
+    }
+    if _, err = tx.Exec(`DELETE FROM sessions`); err != nil {
+        tx.Rollback()
+        return fmt.Errorf("store: clear sessions: %w", err)
+    }
 
-	_, err = tmpFile.Write(data)
-	if err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("store: save: write temp: %w", err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("store: save: sync temp: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("store: save: close temp: %w", err)
-	}
+    // Insert each session and its data.
+    for id, s := range cf.Sessions {
+        var parent sql.NullString
+        if s.Parent != nil {
+            parent = sql.NullString{String: *s.Parent, Valid: true}
+        } else {
+            parent = sql.NullString{Valid: false}
+        }
+        _, err := tx.Exec(`INSERT INTO sessions (id, parent_id, created_at) VALUES (?, ?, ?)`, id, parent, s.Created)
+        if err != nil {
+            tx.Rollback()
+            return fmt.Errorf("store: insert session %s: %w", id, err)
+        }
+        for k, v := range s.Data {
+            _, err := tx.Exec(`INSERT INTO session_data (session_id, key, value) VALUES (?, ?, ?)`, id, k, v)
+            if err != nil {
+                tx.Rollback()
+                return fmt.Errorf("store: insert data %s.%s: %w", id, k, err)
+            }
+        }
+    }
 
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("store: save: rename: %w", err)
-	}
-	return nil
+    if err := tx.Commit(); err != nil {
+        return fmt.Errorf("store: commit transaction: %w", err)
+    }
+    return nil
 }
 
-type flock struct {
-	Type   int16
-	Whence int16
-	Start  int64
-	Len    int64
-	Pid    int32
-}
-
-// WithLock acquires an exclusive flock on path+lockName, calls fn, and releases the lock.
-func WithLock(path string, fn func() error) error {
-	dir := filepath.Dir(path)
-	lockPath := filepath.Join(dir, lockName)
-
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return fmt.Errorf("store: lock: open: %w", err)
-	}
-	defer f.Close()
-
-	var lkErr error
-	for i := 0; i < maxLockRetries; i++ {
-		fd := f.Fd()
-		flk := syscall.Flock_t{
-			Type:  syscall.F_WRLCK,
-			Whence: 0,
-			Start:  0,
-			Len:    0,
-			Pid:    int32(os.Getpid()),
-		}
-		lkErr = syscall.FcntlFlock(uintptr(fd), syscall.F_SETLK, &flk)
-		if lkErr == nil {
-			break
-		}
-		if lkErr == syscall.EACCES || lkErr == syscall.EAGAIN {
-			time.Sleep(time.Duration(lockRetryMs) * time.Millisecond)
-			continue
-		}
-		return fmt.Errorf("store: lock: %w", lkErr)
-	}
-	if lkErr != nil {
-		return fmt.Errorf("store: lock: could not acquire lock after %d retries: %w", maxLockRetries, lkErr)
-	}
-
-	var once sync.Once
-	var fnErr error
-	func() {
-		defer func() {
-			flk := syscall.Flock_t{
-				Type:   syscall.F_UNLCK,
-				Whence: 0,
-				Start:  0,
-				Len:    0,
-				Pid:    int32(os.Getpid()),
-			}
-			syscall.FcntlFlock(uintptr(f.Fd()), syscall.F_SETLK, &flk)
-			if r := recover(); r != nil {
-				once.Do(func() {
-					fnErr = fmt.Errorf("store: lock: panic: %v", r)
-				})
-			}
-		}()
-		fnErr = fn()
-	}()
-	return fnErr
+// WithLock is a no‑op for SQLite because the driver handles concurrency.
+func WithLock(_ string, fn func() error) error {
+    // Directly execute the function; any DB contention will be handled by SQLite.
+    return fn()
 }
