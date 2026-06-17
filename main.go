@@ -29,7 +29,9 @@ func main() {
 		exitCode = cmd.Export(args)
 	case "tree":
 		exitCode = cmd.Tree(args)
-case "help":
+	case "delete":
+		exitCode = cmd.Delete(args)
+	case "help":
 		exitCode = cmd.Help(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
