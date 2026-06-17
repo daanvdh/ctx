@@ -11,6 +11,13 @@ func getCtxPath() (string, error) {
     // CTX_DB_PATH can be set to any filesystem path that the user wishes to store
     // the SQLite database in. If not set, we default to $HOME/.config/ctx/ctx.sqlite.
     if custom := os.Getenv("CTX_DB_PATH"); custom != "" {
+        // Ensure that the directory for the custom path exists.
+        // This makes it possible to use an arbitrary location without
+        // requiring the caller to pre‑create the parent directories.
+        dir := filepath.Dir(custom)
+        if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+            return "", fmt.Errorf("failed to create directory %s for CTX_DB_PATH: %w", dir, mkErr)
+        }
         return custom, nil
     }
 
