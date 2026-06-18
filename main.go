@@ -29,6 +29,8 @@ func main() {
 		exitCode = cmd.Export(args)
 	case "tree":
 		exitCode = cmd.Tree(args)
+	case "render":
+		exitCode = cmd.Render(args)
 	case "delete":
 		exitCode = cmd.Delete(args)
 	case "help":

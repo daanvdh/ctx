@@ -18,6 +18,7 @@ func Help(_ []string) int {
     fmt.Println("  get <session> <key>                        Get a key from a session")
     fmt.Println("  export <session>                           Export all visible keys")
     fmt.Println("  tree                                      Show the session tree")
+    fmt.Println("  render <session> <key>		Render a stored template with placeholders using session variables")
     fmt.Println("  delete <session>                          Delete a session and its descendants (including variables)")
     fmt.Println("  help                                      Show this help message")
 
