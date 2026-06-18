@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"ctx/internal/config"
@@ -160,7 +160,7 @@ func (a *App) DeleteSessionTree(ctx context.Context, sessionID string) error {
 }
 
 func (a *App) Execute(ctx context.Context, sessionID, templateName string) error {
-	templatePath, err := config.TriggerPath(templateName)
+	templatePath, err := triggerTemplatePath(templateName)
 	if err != nil {
 		return err
 	}
@@ -185,14 +185,49 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	fullCmd := fmt.Sprintf("%s %s", command, strconv.Quote(renderedPrompt))
-	execCmd := exec.CommandContext(ctx, "sh", "-c", fullCmd)
+	commandParts := strings.Fields(command)
+	if len(commandParts) == 0 {
+		return fmt.Errorf("empty command in template")
+	}
+	execCmd := exec.CommandContext(ctx, commandParts[0], append(commandParts[1:], renderedPrompt)...)
 	execCmd.Stdout = a.stdout
 	execCmd.Stderr = a.stderr
 	if err := execCmd.Run(); err != nil {
 		return fmt.Errorf("command execution failed: %w", err)
 	}
 	return nil
+}
+
+func triggerTemplatePath(templateName string) (string, error) {
+	templatePath, err := config.TriggerPath(templateName)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(templatePath); err == nil {
+		return templatePath, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	if ext := filepath.Ext(templateName); ext != "" {
+		return templatePath, nil
+	}
+
+	triggerDir, err := config.TriggerDir()
+	if err != nil {
+		return "", err
+	}
+	matches, err := filepath.Glob(filepath.Join(triggerDir, templateName+".*"))
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("multiple trigger templates match %q", templateName)
+	}
+	return templatePath, nil
 }
 
 func sortedKeys(m map[string]string) []string {

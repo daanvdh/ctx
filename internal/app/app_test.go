@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,6 +119,42 @@ func TestRenderUsesInjectedStore(t *testing.T) {
 	}
 	if got != "Fix 22" {
 		t.Fatalf("Render = %q, want Fix 22", got)
+	}
+}
+
+func TestRenderIgnoreMissing(t *testing.T) {
+	a := NewWithStore(&fakeStore{
+		values:   map[string]string{"PROMPT": "Fix $ISSUE for $OWNER"},
+		resolved: map[string]string{"ISSUE": "22"},
+	})
+
+	got, err := a.Render(context.Background(), "s1", "PROMPT", true)
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if got != "Fix 22 for $OWNER" {
+		t.Fatalf("Render = %q, want missing placeholder preserved", got)
+	}
+}
+
+func TestTriggerTemplatePathFindsExtension(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	want := filepath.Join(triggerDir, "test.md")
+	if err := os.WriteFile(want, []byte("command=echo\n---\nhello"), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	got, err := triggerTemplatePath("test")
+	if err != nil {
+		t.Fatalf("triggerTemplatePath error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
 
