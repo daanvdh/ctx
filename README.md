@@ -26,13 +26,12 @@ go install github.com/daanvdh/ctx@latest
 
 ## Configuration
 
-- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`.
-- Set the environment variable `CTX_DB_PATH` to point to a different file,
-  e.g.:
-
-```bash
-export CTX_DB_PATH=/tmp/my‑ctx.db   # before running any ctx command
-```
+- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`. This location can be changed by creating a JSON settings file (`$HOME/.config/ctx/settings.json`) with a `db_path` field, for example:
+  ```json
+  {
+    "db_path": "/tmp/my‑ctx.db"
+  }
+  ```
 
 ## Core Commands
 
@@ -45,10 +44,7 @@ export CTX_DB_PATH=/tmp/my‑ctx.db   # before running any ctx command
 | `ctx tree` | `ctx tree` | Render the complete session hierarchy as an ASCII tree, showing ids and key/value pairs. |
 | `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
 
-
 **Note:** If `CTX_ID` is set in the environment, it will be used as the implicit parent for newly created sessions when no `--parent` flag is provided.
-
-
 
 All commands exit with status 0 on success; error details are written to **stderr**.
 
@@ -73,7 +69,6 @@ CHILD=$(ctx new lint-agent --parent $ROOT)   # explicit parent flag takes preced
 ```
 
 Remember to **export** the variable; otherwise it is only set for a single command and will not be visible to subsequent `ctx new` invocations.
-
 
 ```bash
 # Orchestrator creates a root session and a child.
