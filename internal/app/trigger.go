@@ -28,27 +28,29 @@ type TriggerChange struct {
 }
 
 type TriggerDefinition struct {
-	Name           string
-	Path           string
-	TriggerSession string
-	Key            string
-	Match          string
-	AnyChange      bool
-	Order          int
-	Command        string
-	PromptTemplate string
+	Name             string
+	Path             string
+	TriggerSession   string
+	Key              string
+	Match            string
+	AnyChange        bool
+	Order            int
+	ExecutionSession string
+	Command          string
+	PromptTemplate   string
 }
 
 type triggerLog struct {
-	Trigger   string `json:"trigger"`
-	SessionID string `json:"session_id"`
-	Key       string `json:"key"`
-	OldValue  string `json:"old_value"`
-	NewValue  string `json:"new_value"`
-	ExitCode  int    `json:"exit_code"`
-	Stdout    string `json:"stdout"`
-	Stderr    string `json:"stderr"`
-	Error     string `json:"error,omitempty"`
+	Trigger          string `json:"trigger"`
+	SessionID        string `json:"session_id"`
+	Key              string `json:"key"`
+	OldValue         string `json:"old_value"`
+	NewValue         string `json:"new_value"`
+	ExecutionSession string `json:"execution_session"`
+	ExitCode         int    `json:"exit_code"`
+	Stdout           string `json:"stdout"`
+	Stderr           string `json:"stderr"`
+	Error            string `json:"error,omitempty"`
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
@@ -193,6 +195,8 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 				return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: order must be an integer", path)
 			}
 			def.Order = parsed
+		case "execution-session":
+			def.ExecutionSession = value
 		case "command":
 			def.Command = value
 		default:
@@ -239,6 +243,10 @@ func (d TriggerDefinition) Matches(change TriggerChange) (bool, error) {
 }
 
 func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change TriggerChange) error {
+	executionSession, err := a.executionSession(ctx, def, change)
+	if err != nil {
+		return err
+	}
 	vars, err := a.store.Resolve(ctx, change.SessionID)
 	if err != nil {
 		return err
@@ -246,13 +254,14 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	renderedPrompt, err := render.TemplateString(def.PromptTemplate, vars)
 	if err != nil {
 		return a.writeTriggerLog(ctx, change, triggerLog{
-			Trigger:   def.Name,
-			SessionID: change.SessionID,
-			Key:       change.Key,
-			OldValue:  change.OldValue,
-			NewValue:  change.NewValue,
-			ExitCode:  -1,
-			Error:     err.Error(),
+			Trigger:          def.Name,
+			SessionID:        change.SessionID,
+			Key:              change.Key,
+			OldValue:         change.OldValue,
+			NewValue:         change.NewValue,
+			ExecutionSession: executionSession,
+			ExitCode:         -1,
+			Error:            err.Error(),
 		})
 	}
 
@@ -261,7 +270,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		return fmt.Errorf("trigger %s has empty command", def.Path)
 	}
 	cmd := exec.CommandContext(ctx, commandParts[0], append(commandParts[1:], renderedPrompt)...)
-	cmd.Env = append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1")
+	cmd.Env = append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -279,16 +288,29 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	}
 
 	return a.writeTriggerLog(ctx, change, triggerLog{
-		Trigger:   def.Name,
-		SessionID: change.SessionID,
-		Key:       change.Key,
-		OldValue:  change.OldValue,
-		NewValue:  change.NewValue,
-		ExitCode:  exitCode,
-		Stdout:    stdout.String(),
-		Stderr:    stderr.String(),
-		Error:     errText,
+		Trigger:          def.Name,
+		SessionID:        change.SessionID,
+		Key:              change.Key,
+		OldValue:         change.OldValue,
+		NewValue:         change.NewValue,
+		ExecutionSession: executionSession,
+		ExitCode:         exitCode,
+		Stdout:           stdout.String(),
+		Stderr:           stderr.String(),
+		Error:            errText,
 	})
+}
+
+func (a *App) executionSession(ctx context.Context, def TriggerDefinition, change TriggerChange) (string, error) {
+	if def.ExecutionSession != "" {
+		return def.ExecutionSession, nil
+	}
+	parent := change.SessionID
+	id, err := a.CreateSession(ctx, "", &parent)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (a *App) writeTriggerLog(ctx context.Context, change TriggerChange, log triggerLog) error {

@@ -206,6 +206,16 @@ func TestTriggerOrderDefaultsToZero(t *testing.T) {
 	}
 }
 
+func TestParseTriggerExecutionSession(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "execution-session=worker\ncommand=echo\n---\nhello")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.ExecutionSession != "worker" {
+		t.Fatalf("ExecutionSession = %q, want worker", def.ExecutionSession)
+	}
+}
+
 func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -227,16 +237,36 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
 		t.Fatalf("SetValue error: %v", err)
 	}
+	if fake.parentID == nil || *fake.parentID != "s1" {
+		t.Fatalf("trigger execution parent = %v, want s1", fake.parentID)
+	}
 
 	foundLog := false
 	for key, value := range fake.values {
 		if strings.HasPrefix(key, "s1.trigger_log.") {
-			foundLog = strings.Contains(value, `"trigger":"done"`) && strings.Contains(value, "Story ship it")
+			foundLog = strings.Contains(value, `"trigger":"done"`) &&
+				strings.Contains(value, "Story ship it") &&
+				strings.Contains(value, `"execution_session":"`+fake.createdID+`"`)
 			break
 		}
 	}
 	if !foundLog {
 		t.Fatalf("expected trigger log in values, got %#v", fake.values)
+	}
+}
+
+func TestTriggerUsesExplicitExecutionSession(t *testing.T) {
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	session, err := a.executionSession(context.Background(), TriggerDefinition{ExecutionSession: "worker"}, TriggerChange{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("executionSession error: %v", err)
+	}
+	if session != "worker" {
+		t.Fatalf("session = %q, want worker", session)
+	}
+	if fake.createdID != "" {
+		t.Fatalf("unexpected child session creation: %q", fake.createdID)
 	}
 }
 
