@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ctx/internal/config"
@@ -33,6 +34,7 @@ type TriggerDefinition struct {
 	Key            string
 	Match          string
 	AnyChange      bool
+	Order          int
 	Command        string
 	PromptTemplate string
 }
@@ -54,6 +56,7 @@ func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange)
 	if err != nil {
 		return err
 	}
+	matching := []TriggerDefinition{}
 	for _, def := range defs {
 		matches, err := def.Matches(change)
 		if err != nil {
@@ -62,7 +65,49 @@ func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange)
 		if !matches {
 			continue
 		}
-		if err := a.executeTrigger(ctx, def, change); err != nil {
+		matching = append(matching, def)
+	}
+	sort.Slice(matching, func(i, j int) bool {
+		if matching[i].Order != matching[j].Order {
+			return matching[i].Order < matching[j].Order
+		}
+		return matching[i].Path < matching[j].Path
+	})
+
+	for i := 0; i < len(matching); {
+		order := matching[i].Order
+		j := i + 1
+		for j < len(matching) && matching[j].Order == order {
+			j++
+		}
+		if err := a.executeTriggerGroup(ctx, matching[i:j], change); err != nil {
+			return err
+		}
+		i = j
+	}
+	return nil
+}
+
+func (a *App) executeTriggerGroup(ctx context.Context, defs []TriggerDefinition, change TriggerChange) error {
+	if len(defs) == 1 {
+		return a.executeTrigger(ctx, defs[0], change)
+	}
+
+	errCh := make(chan error, len(defs))
+	var wg sync.WaitGroup
+	for _, def := range defs {
+		def := def
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- a.executeTrigger(ctx, def, change)
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
 			return err
 		}
 	}
@@ -142,6 +187,12 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 				return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change must be true or false", path)
 			}
 			def.AnyChange = parsed
+		case "order":
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: order must be an integer", path)
+			}
+			def.Order = parsed
 		case "command":
 			def.Command = value
 		default:

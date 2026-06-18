@@ -189,6 +189,23 @@ func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
 	}
 }
 
+func TestParseTriggerRequiresIntegerOrder(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "order=first\ncommand=echo\n---\nhello")
+	if err == nil {
+		t.Fatal("expected non-integer order to fail")
+	}
+}
+
+func TestTriggerOrderDefaultsToZero(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "command=echo\n---\nhello")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.Order != 0 {
+		t.Fatalf("Order = %d, want 0", def.Order)
+	}
+}
+
 func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
