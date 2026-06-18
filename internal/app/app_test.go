@@ -48,6 +48,10 @@ func (f *fakeStore) Resolve(context.Context, string) (map[string]string, error) 
 	return f.resolved, nil
 }
 
+func (f *fakeStore) ShareContext(context.Context, string, string) error {
+	return f.err
+}
+
 func (f *fakeStore) SessionNodes(context.Context) ([]model.SessionNode, error) {
 	if f.err != nil {
 		return nil, f.err

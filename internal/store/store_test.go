@@ -44,8 +44,8 @@ func TestMigrationRecordsSchemaVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("schema version = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2", version)
 	}
 }
 
@@ -193,6 +193,68 @@ func TestResolveReadsVisibleScope(t *testing.T) {
 	}
 	if resolved["SHADOW"] != "child" {
 		t.Fatalf("SHADOW = %q, want child", resolved["SHADOW"])
+	}
+}
+
+func TestShareContextReadsSharedBeforeAncestors(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_share_context.db")
+
+	if err := CreateSession(dsn, "ancestor", nil); err != nil {
+		t.Fatalf("CreateSession ancestor error: %v", err)
+	}
+	parent := "ancestor"
+	if err := CreateSession(dsn, "target", &parent); err != nil {
+		t.Fatalf("CreateSession target error: %v", err)
+	}
+	if err := CreateSession(dsn, "shared", nil); err != nil {
+		t.Fatalf("CreateSession shared error: %v", err)
+	}
+	if err := SetValue(dsn, "ancestor", "KEY", "ancestor-value"); err != nil {
+		t.Fatalf("SetValue ancestor error: %v", err)
+	}
+	if err := SetValue(dsn, "shared", "KEY", "shared-value"); err != nil {
+		t.Fatalf("SetValue shared error: %v", err)
+	}
+	if err := ShareContext(dsn, "shared", "target"); err != nil {
+		t.Fatalf("ShareContext error: %v", err)
+	}
+
+	got, err := GetValue(dsn, "target", "KEY")
+	if err != nil {
+		t.Fatalf("GetValue error: %v", err)
+	}
+	if got != "shared-value" {
+		t.Fatalf("GetValue = %q, want shared-value", got)
+	}
+}
+
+func TestShareContextTargetValueWins(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_share_target_wins.db")
+
+	if err := CreateSession(dsn, "target", nil); err != nil {
+		t.Fatalf("CreateSession target error: %v", err)
+	}
+	if err := CreateSession(dsn, "shared", nil); err != nil {
+		t.Fatalf("CreateSession shared error: %v", err)
+	}
+	if err := SetValue(dsn, "target", "KEY", "target-value"); err != nil {
+		t.Fatalf("SetValue target error: %v", err)
+	}
+	if err := SetValue(dsn, "shared", "KEY", "shared-value"); err != nil {
+		t.Fatalf("SetValue shared error: %v", err)
+	}
+	if err := ShareContext(dsn, "shared", "target"); err != nil {
+		t.Fatalf("ShareContext error: %v", err)
+	}
+
+	resolved, err := Resolve(dsn, "target")
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+	if resolved["KEY"] != "target-value" {
+		t.Fatalf("KEY = %q, want target-value", resolved["KEY"])
 	}
 }
 

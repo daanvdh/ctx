@@ -21,6 +21,7 @@ type Store interface {
 	SetValue(ctx context.Context, sessionID, key, value string) error
 	GetValue(ctx context.Context, sessionID, key string) (string, error)
 	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
+	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
 	DeleteSessionTree(ctx context.Context, sessionID string) error
 }
@@ -65,7 +66,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
-	if current >= 1 {
+	if current >= 2 {
 		return nil
 	}
 
@@ -75,24 +76,41 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	}
 	defer rollback(tx)
 
-	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions (
+	if current < 1 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         parent_id TEXT,
         created_at DATETIME
     )`); err != nil {
-		return fmt.Errorf("store: create sessions table: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS session_data (
+			return fmt.Errorf("store: create sessions table: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS session_data (
         session_id TEXT,
         key TEXT,
         value TEXT,
         PRIMARY KEY (session_id, key),
         FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
     )`); err != nil {
-		return fmt.Errorf("store: create session_data table: %w", err)
+			return fmt.Errorf("store: create session_data table: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, ?)`, time.Now()); err != nil {
+			return fmt.Errorf("store: record schema migration: %w", err)
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)`, time.Now()); err != nil {
-		return fmt.Errorf("store: record schema migration: %w", err)
+	if current < 2 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS session_shares (
+        from_session_id TEXT NOT NULL,
+        to_session_id TEXT NOT NULL,
+        created_at DATETIME NOT NULL,
+        PRIMARY KEY (from_session_id, to_session_id),
+        FOREIGN KEY(from_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY(to_session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )`); err != nil {
+			return fmt.Errorf("store: create session_shares table: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, ?)`, time.Now()); err != nil {
+			return fmt.Errorf("store: record schema migration: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit migration: %w", err)
@@ -187,6 +205,9 @@ func (s *SQLite) save(ctx context.Context, cf *model.ContextFile) error {
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_data`); err != nil {
 		return fmt.Errorf("store: clear session_data: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM session_shares`); err != nil {
+		return fmt.Errorf("store: clear session_shares: %w", err)
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions`); err != nil {
 		return fmt.Errorf("store: clear sessions: %w", err)
@@ -324,32 +345,69 @@ func (s *SQLite) GetValue(ctx context.Context, sessionID, key string) (string, e
 		return "", err
 	}
 
-	const query = `
-        WITH RECURSIVE chain(id, depth) AS (
-            SELECT id, 0 FROM sessions WHERE id = ?
-            UNION ALL
-            SELECT sessions.parent_id, chain.depth + 1
-            FROM sessions
-            JOIN chain ON sessions.id = chain.id
-            WHERE sessions.parent_id IS NOT NULL
-              AND sessions.parent_id != ''
-              AND chain.depth < 49
-        )
+	const query = visibleScopeCTE + `
         SELECT session_data.value
-        FROM chain
-        JOIN session_data ON session_data.session_id = chain.id
+        FROM visible_scope
+        JOIN session_data ON session_data.session_id = visible_scope.id
         WHERE session_data.key = ?
-        ORDER BY chain.depth
+        ORDER BY visible_scope.priority, visible_scope.share_order, visible_scope.depth
         LIMIT 1`
 
 	var value string
-	if err := db.QueryRowContext(ctx, query, sessionID, key).Scan(&value); err != nil {
+	if err := db.QueryRowContext(ctx, query, sessionID, sessionID, key).Scan(&value); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
 		}
 		return "", fmt.Errorf("store: get data %s.%s: %w", sessionID, key, err)
 	}
 	return value, nil
+}
+
+func ShareContext(path, fromSessionID, toSessionID string) error {
+	return NewSQLite(path).ShareContext(context.Background(), fromSessionID, toSessionID)
+}
+
+func (s *SQLite) ShareContext(ctx context.Context, fromSessionID, toSessionID string) error {
+	return retryBusy(ctx, func() error {
+		return s.shareContext(ctx, fromSessionID, toSessionID)
+	})
+}
+
+func (s *SQLite) shareContext(ctx context.Context, fromSessionID, toSessionID string) error {
+	db, err := initDB(ctx, s.path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin transaction: %w", err)
+	}
+	defer rollback(tx)
+
+	for _, id := range []string{fromSessionID, toSessionID} {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, id).Scan(&exists); err != nil {
+			return fmt.Errorf("store: check session %s: %w", id, err)
+		}
+		if exists == 0 {
+			return fmt.Errorf("session %s not found", id)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO session_shares (from_session_id, to_session_id, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(from_session_id, to_session_id) DO NOTHING
+    `, fromSessionID, toSessionID, time.Now()); err != nil {
+		return fmt.Errorf("store: share context %s to %s: %w", fromSessionID, toSessionID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit transaction: %w", err)
+	}
+	return nil
 }
 
 func Resolve(path, sessionID string) (map[string]string, error) {
@@ -367,23 +425,13 @@ func (s *SQLite) Resolve(ctx context.Context, sessionID string) (map[string]stri
 		return nil, err
 	}
 
-	const query = `
-        WITH RECURSIVE chain(id, depth) AS (
-            SELECT id, 0 FROM sessions WHERE id = ?
-            UNION ALL
-            SELECT sessions.parent_id, chain.depth + 1
-            FROM sessions
-            JOIN chain ON sessions.id = chain.id
-            WHERE sessions.parent_id IS NOT NULL
-              AND sessions.parent_id != ''
-              AND chain.depth < 49
-        )
+	const query = visibleScopeCTE + `
         SELECT session_data.key, session_data.value
-        FROM chain
-        JOIN session_data ON session_data.session_id = chain.id
-        ORDER BY chain.depth`
+        FROM visible_scope
+        JOIN session_data ON session_data.session_id = visible_scope.id
+        ORDER BY visible_scope.priority, visible_scope.share_order, visible_scope.depth`
 
-	rows, err := db.QueryContext(ctx, query, sessionID)
+	rows, err := db.QueryContext(ctx, query, sessionID, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("store: resolve data for %s: %w", sessionID, err)
 	}
@@ -405,6 +453,41 @@ func (s *SQLite) Resolve(ctx context.Context, sessionID string) (map[string]stri
 
 	return resolved, nil
 }
+
+const visibleScopeCTE = `
+        WITH RECURSIVE
+        own_chain(id, depth) AS (
+            SELECT id, 0 FROM sessions WHERE id = ?
+            UNION ALL
+            SELECT sessions.parent_id, own_chain.depth + 1
+            FROM sessions
+            JOIN own_chain ON sessions.id = own_chain.id
+            WHERE sessions.parent_id IS NOT NULL
+              AND sessions.parent_id != ''
+              AND own_chain.depth < 49
+        ),
+        shared_roots(id, share_order) AS (
+            SELECT from_session_id, ROW_NUMBER() OVER (ORDER BY from_session_id)
+            FROM session_shares
+            WHERE to_session_id = ?
+        ),
+        shared_chain(id, share_order, depth) AS (
+            SELECT id, share_order, 0 FROM shared_roots
+            UNION ALL
+            SELECT sessions.parent_id, shared_chain.share_order, shared_chain.depth + 1
+            FROM sessions
+            JOIN shared_chain ON sessions.id = shared_chain.id
+            WHERE sessions.parent_id IS NOT NULL
+              AND sessions.parent_id != ''
+              AND shared_chain.depth < 49
+        ),
+        visible_scope(id, priority, share_order, depth) AS (
+            SELECT id, 0, 0, 0 FROM own_chain WHERE depth = 0
+            UNION ALL
+            SELECT id, 1, share_order, depth FROM shared_chain
+            UNION ALL
+            SELECT id, 2, 0, depth FROM own_chain WHERE depth > 0
+        )`
 
 func SessionNodes(path string) ([]model.SessionNode, error) {
 	return NewSQLite(path).SessionNodes(context.Background())

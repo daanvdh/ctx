@@ -28,6 +28,7 @@ type Store interface {
 	SetValue(ctx context.Context, sessionID, key, value string) error
 	GetValue(ctx context.Context, sessionID, key string) (string, error)
 	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
+	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
 	DeleteSessionTree(ctx context.Context, sessionID string) error
 }
@@ -92,6 +93,10 @@ func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error 
 
 func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, error) {
 	return a.store.GetValue(ctx, sessionID, key)
+}
+
+func (a *App) ShareContext(ctx context.Context, fromSessionID, toSessionID string) error {
+	return a.store.ShareContext(ctx, fromSessionID, toSessionID)
 }
 
 func (a *App) Export(ctx context.Context, sessionID string) ([]string, error) {

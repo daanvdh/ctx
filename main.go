@@ -17,6 +17,7 @@ func main() {
 		"get":     {Name: "get", Run: cmd.Get},
 		"export":  {Name: "export", Run: cmd.Export},
 		"show":    {Name: "show", Run: cmd.Show},
+		"share":   {Name: "share", Run: cmd.Share},
 		"tree":    {Name: "tree", Run: cmd.Tree},
 		"render":  {Name: "render", Run: cmd.Render},
 		"delete":  {Name: "delete", Run: cmd.Delete},

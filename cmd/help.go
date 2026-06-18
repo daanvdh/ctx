@@ -17,6 +17,7 @@ func Help(_ context.Context, _ []string) error {
 	fmt.Println("                                              Use --parent to set the parent explicitly; otherwise CTX_ID env variable is used.")
 	fmt.Println("  set <session> <key> <value>                Set a key in a session")
 	fmt.Println("  get <session> <key>                        Get a key from a session")
+	fmt.Println("  share <from> <to>                          Share one session's context with another")
 	fmt.Println("  export <session>                           Export all visible keys")
 	fmt.Println("  tree                                      Show the session tree")
 	fmt.Println("      --format text|json                   Choose tree output format")
