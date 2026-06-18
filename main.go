@@ -8,6 +8,8 @@ import (
 	"ctx/cmd"
 )
 
+var version = "dev"
+
 func main() {
 	commands := map[string]cmd.Command{
 		"new":     {Name: "new", Run: cmd.New},
@@ -26,6 +28,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "ctx: help: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+	if os.Args[1] == "--version" || os.Args[1] == "version" {
+		fmt.Println(version)
 		return
 	}
 
