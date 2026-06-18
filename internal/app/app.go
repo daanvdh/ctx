@@ -110,6 +110,19 @@ func (a *App) Export(ctx context.Context, sessionID string) ([]string, error) {
 	return lines, nil
 }
 
+func (a *App) Show(ctx context.Context, sessionID string) ([]string, error) {
+	resolved, err := a.store.Resolve(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make([]string, 0, len(resolved))
+	for _, key := range sortedKeys(resolved) {
+		lines = append(lines, fmt.Sprintf("%s = %s", key, resolved[key]))
+	}
+	return lines, nil
+}
+
 func (a *App) Tree(ctx context.Context, format string) (string, error) {
 	nodes, err := a.store.SessionNodes(ctx)
 	if err != nil {
