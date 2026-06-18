@@ -32,9 +32,9 @@ func main() {
 	case "render":
 		exitCode = cmd.Render(args)
 	case "delete":
-		exitCode = cmd.Delete(args)
-	case "help":
-		exitCode = cmd.Help(args)
+        exitCode = cmd.Delete(args)
+	case "execute":
+		exitCode = cmd.Execute(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		os.Exit(1)

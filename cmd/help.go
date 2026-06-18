@@ -20,7 +20,7 @@ func Help(_ []string) int {
     fmt.Println("  tree                                      Show the session tree")
     fmt.Println("  render <session> <key>		Render a stored template with placeholders using session variables")
     fmt.Println("  delete <session>                          Delete a session and its descendants (including variables)")
+    fmt.Println("  execute <session> <template>		Execute a stored trigger template using the defined command and placeholders")
     fmt.Println("  help                                      Show this help message")
-
     return 0
 }
