@@ -2,6 +2,7 @@ package render
 
 import (
 	"ctx/internal/model"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +44,26 @@ func TestRenderMissingPlaceholder(t *testing.T) {
 	_, err := Render(cf, "s1", "STORY_PROMPT")
 	if err == nil {
 		t.Fatalf("expected error for missing placeholder, got nil")
+	}
+}
+
+func TestTemplateStringEscapedPlaceholder(t *testing.T) {
+	got, err := TemplateString("literal $$ISSUE and real $ISSUE", map[string]string{"ISSUE": "22"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "literal $ISSUE and real 22"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestTemplateStringMissingPlaceholdersDeterministic(t *testing.T) {
+	_, err := TemplateString("$B $A $B", nil)
+	if err == nil {
+		t.Fatal("expected missing placeholder error")
+	}
+	if !strings.Contains(err.Error(), "[A B]") {
+		t.Fatalf("error = %q, want sorted unique placeholders [A B]", err.Error())
 	}
 }

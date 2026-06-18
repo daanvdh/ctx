@@ -1,63 +1,111 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
+	"strings"
 	"time"
 
 	"ctx/internal/model"
 	_ "modernc.org/sqlite"
 )
 
-var mu sync.Mutex
-var errAlreadyExists = errors.New("session already exists")
+var ErrAlreadyExists = errors.New("session already exists")
 
-// initDB opens (or creates) the SQLite database at the given path and ensures
-// that the required tables exist.
-func initDB(path string) (*sql.DB, error) {
+type Store interface {
+	Load(ctx context.Context) (*model.ContextFile, error)
+	Save(ctx context.Context, cf *model.ContextFile) error
+	CreateSession(ctx context.Context, id string, parentID *string) error
+	SetValue(ctx context.Context, sessionID, key, value string) error
+	GetValue(ctx context.Context, sessionID, key string) (string, error)
+	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
+	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
+	DeleteSessionTree(ctx context.Context, sessionID string) error
+}
+
+type SQLite struct {
+	path string
+}
+
+func NewSQLite(path string) *SQLite {
+	return &SQLite{path: path}
+}
+
+func initDB(ctx context.Context, path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("store: open sqlite: %w", err)
 	}
-	// Set a busy timeout (ms) so SQLite will retry when the DB is locked.
-	if _, err = db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+	if _, err = db.ExecContext(ctx, `PRAGMA busy_timeout=5000`); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("store: set busy_timeout: %w", err)
 	}
-	if _, err = db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+	if _, err = db.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("store: enable foreign_keys: %w", err)
 	}
+	if err := migrate(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
 
-	// Create tables if they don't exist.
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+func migrate(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at DATETIME NOT NULL
+    )`); err != nil {
+		return fmt.Errorf("store: create schema_migrations table: %w", err)
+	}
+
+	var current int
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
+		return fmt.Errorf("store: read schema version: %w", err)
+	}
+	if current >= 1 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin migration: %w", err)
+	}
+	defer rollback(tx)
+
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         parent_id TEXT,
         created_at DATETIME
-    )`)
-	if err != nil {
-		return nil, fmt.Errorf("store: create sessions table: %w", err)
+    )`); err != nil {
+		return fmt.Errorf("store: create sessions table: %w", err)
 	}
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS session_data (
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS session_data (
         session_id TEXT,
         key TEXT,
         value TEXT,
         PRIMARY KEY (session_id, key),
         FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )`)
-	if err != nil {
-		return nil, fmt.Errorf("store: create session_data table: %w", err)
+    )`); err != nil {
+		return fmt.Errorf("store: create session_data table: %w", err)
 	}
-	// Return the opened DB.
-	return db, nil
-
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)`, time.Now()); err != nil {
+		return fmt.Errorf("store: record schema migration: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit migration: %w", err)
+	}
+	return nil
 }
 
-// Load reads all sessions from the SQLite database at path and returns a ContextFile.
 func Load(path string) (*model.ContextFile, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	db, err := initDB(path)
+	return NewSQLite(path).Load(context.Background())
+}
+
+func (s *SQLite) Load(ctx context.Context) (*model.ContextFile, error) {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +113,7 @@ func Load(path string) (*model.ContextFile, error) {
 
 	cf := &model.ContextFile{Sessions: make(map[string]*model.Session)}
 
-	// Load sessions.
-	rows, err := db.Query(`SELECT id, parent_id, created_at FROM sessions`)
+	rows, err := db.QueryContext(ctx, `SELECT id, parent_id, created_at FROM sessions`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query sessions: %w", err)
 	}
@@ -90,75 +137,72 @@ func Load(path string) (*model.ContextFile, error) {
 		return nil, fmt.Errorf("store: iterate sessions: %w", err)
 	}
 
-	// Load data for each session.
-	dRows, err := db.Query(`SELECT session_id, key, value FROM session_data`)
+	dataRows, err := db.QueryContext(ctx, `SELECT session_id, key, value FROM session_data`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query session_data: %w", err)
 	}
-	defer dRows.Close()
+	defer dataRows.Close()
 
-	for dRows.Next() {
-		var sid, k, v string
-		if err := dRows.Scan(&sid, &k, &v); err != nil {
+	for dataRows.Next() {
+		var sessionID, key, value string
+		if err := dataRows.Scan(&sessionID, &key, &value); err != nil {
 			return nil, fmt.Errorf("store: scan session_data: %w", err)
 		}
-		sess, ok := cf.Sessions[sid]
+		sess, ok := cf.Sessions[sessionID]
 		if !ok {
-			// Session without a row in sessions table – create placeholder.
 			sess = &model.Session{Data: make(map[string]string)}
-			cf.Sessions[sid] = sess
+			cf.Sessions[sessionID] = sess
 		}
-		sess.Data[k] = v
+		sess.Data[key] = value
 	}
-	if err := dRows.Err(); err != nil {
+	if err := dataRows.Err(); err != nil {
 		return nil, fmt.Errorf("store: iterate session_data: %w", err)
 	}
 
 	return cf, nil
 }
 
-// Save writes the entire ContextFile to the SQLite database at path.
 func Save(path string, cf *model.ContextFile) error {
-	mu.Lock()
-	defer mu.Unlock()
-	db, err := initDB(path)
+	return NewSQLite(path).Save(context.Background(), cf)
+}
+
+func (s *SQLite) Save(ctx context.Context, cf *model.ContextFile) error {
+	return retryBusy(ctx, func() error {
+		return s.save(ctx, cf)
+	})
+}
+
+func (s *SQLite) save(ctx context.Context, cf *model.ContextFile) error {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin transaction: %w", err)
 	}
-	// Clear existing data.
-	if _, err = tx.Exec(`DELETE FROM session_data`); err != nil {
-		tx.Rollback()
+	defer rollback(tx)
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM session_data`); err != nil {
 		return fmt.Errorf("store: clear session_data: %w", err)
 	}
-	if _, err = tx.Exec(`DELETE FROM sessions`); err != nil {
-		tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions`); err != nil {
 		return fmt.Errorf("store: clear sessions: %w", err)
 	}
 
-	// Insert each session and its data.
-	for id, s := range cf.Sessions {
+	for id, sess := range cf.Sessions {
 		var parent sql.NullString
-		if s.Parent != nil {
-			parent = sql.NullString{String: *s.Parent, Valid: true}
-		} else {
-			parent = sql.NullString{Valid: false}
+		if sess.Parent != nil {
+			parent = sql.NullString{String: *sess.Parent, Valid: true}
 		}
-		_, err := tx.Exec(`INSERT INTO sessions (id, parent_id, created_at) VALUES (?, ?, ?)`, id, parent, s.Created)
-		if err != nil {
-			tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, parent_id, created_at) VALUES (?, ?, ?)`, id, parent, sess.Created); err != nil {
 			return fmt.Errorf("store: insert session %s: %w", id, err)
 		}
-		for k, v := range s.Data {
-			_, err := tx.Exec(`INSERT INTO session_data (session_id, key, value) VALUES (?, ?, ?)`, id, k, v)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("store: insert data %s.%s: %w", id, k, err)
+		for key, value := range sess.Data {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO session_data (session_id, key, value) VALUES (?, ?, ?)`, id, key, value); err != nil {
+				return fmt.Errorf("store: insert data %s.%s: %w", id, key, err)
 			}
 		}
 	}
@@ -170,32 +214,39 @@ func Save(path string, cf *model.ContextFile) error {
 }
 
 func CreateSession(path, id string, parentID *string) error {
-	mu.Lock()
-	defer mu.Unlock()
+	return NewSQLite(path).CreateSession(context.Background(), id, parentID)
+}
 
-	db, err := initDB(path)
+func (s *SQLite) CreateSession(ctx context.Context, id string, parentID *string) error {
+	return retryBusy(ctx, func() error {
+		return s.createSession(ctx, id, parentID)
+	})
+}
+
+func (s *SQLite) createSession(ctx context.Context, id string, parentID *string) error {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin transaction: %w", err)
 	}
 	defer rollback(tx)
 
 	var exists int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, id).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, id).Scan(&exists); err != nil {
 		return fmt.Errorf("store: check session %s: %w", id, err)
 	}
 	if exists > 0 {
-		return fmt.Errorf("%w: %s", errAlreadyExists, id)
+		return fmt.Errorf("%w: %s", ErrAlreadyExists, id)
 	}
 
 	var parent sql.NullString
 	if parentID != nil {
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, *parentID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, *parentID).Scan(&exists); err != nil {
 			return fmt.Errorf("store: check parent %s: %w", *parentID, err)
 		}
 		if exists == 0 {
@@ -204,10 +255,9 @@ func CreateSession(path, id string, parentID *string) error {
 		parent = sql.NullString{String: *parentID, Valid: true}
 	}
 
-	if _, err := tx.Exec(`INSERT INTO sessions (id, parent_id, created_at) VALUES (?, ?, ?)`, id, parent, time.Now()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, parent_id, created_at) VALUES (?, ?, ?)`, id, parent, time.Now()); err != nil {
 		return fmt.Errorf("store: insert session %s: %w", id, err)
 	}
-
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit transaction: %w", err)
 	}
@@ -215,35 +265,41 @@ func CreateSession(path, id string, parentID *string) error {
 }
 
 func SetValue(path, sessionID, key, value string) error {
-	mu.Lock()
-	defer mu.Unlock()
+	return NewSQLite(path).SetValue(context.Background(), sessionID, key, value)
+}
 
-	db, err := initDB(path)
+func (s *SQLite) SetValue(ctx context.Context, sessionID, key, value string) error {
+	return retryBusy(ctx, func() error {
+		return s.setValue(ctx, sessionID, key, value)
+	})
+}
+
+func (s *SQLite) setValue(ctx context.Context, sessionID, key, value string) error {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin transaction: %w", err)
 	}
 	defer rollback(tx)
 
 	var exists int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
 		return fmt.Errorf("store: check session %s: %w", sessionID, err)
 	}
 	if exists == 0 {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	_, err = tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
         INSERT INTO session_data (session_id, key, value)
         VALUES (?, ?, ?)
         ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value
-    `, sessionID, key, value)
-	if err != nil {
+    `, sessionID, key, value); err != nil {
 		return fmt.Errorf("store: set data %s.%s: %w", sessionID, key, err)
 	}
 
@@ -254,16 +310,17 @@ func SetValue(path, sessionID, key, value string) error {
 }
 
 func GetValue(path, sessionID, key string) (string, error) {
-	mu.Lock()
-	defer mu.Unlock()
+	return NewSQLite(path).GetValue(context.Background(), sessionID, key)
+}
 
-	db, err := initDB(path)
+func (s *SQLite) GetValue(ctx context.Context, sessionID, key string) (string, error) {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return "", err
 	}
 	defer db.Close()
 
-	if err := ensureSession(db, sessionID); err != nil {
+	if err := ensureSession(ctx, db, sessionID); err != nil {
 		return "", err
 	}
 
@@ -286,7 +343,7 @@ func GetValue(path, sessionID, key string) (string, error) {
         LIMIT 1`
 
 	var value string
-	if err := db.QueryRow(query, sessionID, key).Scan(&value); err != nil {
+	if err := db.QueryRowContext(ctx, query, sessionID, key).Scan(&value); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
 		}
@@ -296,16 +353,17 @@ func GetValue(path, sessionID, key string) (string, error) {
 }
 
 func Resolve(path, sessionID string) (map[string]string, error) {
-	mu.Lock()
-	defer mu.Unlock()
+	return NewSQLite(path).Resolve(context.Background(), sessionID)
+}
 
-	db, err := initDB(path)
+func (s *SQLite) Resolve(ctx context.Context, sessionID string) (map[string]string, error) {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	if err := ensureSession(db, sessionID); err != nil {
+	if err := ensureSession(ctx, db, sessionID); err != nil {
 		return nil, err
 	}
 
@@ -325,7 +383,7 @@ func Resolve(path, sessionID string) (map[string]string, error) {
         JOIN session_data ON session_data.session_id = chain.id
         ORDER BY chain.depth`
 
-	rows, err := db.Query(query, sessionID)
+	rows, err := db.QueryContext(ctx, query, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("store: resolve data for %s: %w", sessionID, err)
 	}
@@ -349,16 +407,17 @@ func Resolve(path, sessionID string) (map[string]string, error) {
 }
 
 func SessionNodes(path string) ([]model.SessionNode, error) {
-	mu.Lock()
-	defer mu.Unlock()
+	return NewSQLite(path).SessionNodes(context.Background())
+}
 
-	db, err := initDB(path)
+func (s *SQLite) SessionNodes(ctx context.Context) ([]model.SessionNode, error) {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT id, parent_id FROM sessions ORDER BY id`)
+	rows, err := db.QueryContext(ctx, `SELECT id, parent_id FROM sessions ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query session nodes: %w", err)
 	}
@@ -384,7 +443,7 @@ func SessionNodes(path string) ([]model.SessionNode, error) {
 		return nil, fmt.Errorf("store: iterate session nodes: %w", err)
 	}
 
-	dataRows, err := db.Query(`SELECT session_id, key, value FROM session_data ORDER BY session_id, key`)
+	dataRows, err := db.QueryContext(ctx, `SELECT session_id, key, value FROM session_data ORDER BY session_id, key`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query session node data: %w", err)
 	}
@@ -411,23 +470,30 @@ func SessionNodes(path string) ([]model.SessionNode, error) {
 }
 
 func DeleteSessionTree(path, sessionID string) error {
-	mu.Lock()
-	defer mu.Unlock()
+	return NewSQLite(path).DeleteSessionTree(context.Background(), sessionID)
+}
 
-	db, err := initDB(path)
+func (s *SQLite) DeleteSessionTree(ctx context.Context, sessionID string) error {
+	return retryBusy(ctx, func() error {
+		return s.deleteSessionTree(ctx, sessionID)
+	})
+}
+
+func (s *SQLite) deleteSessionTree(ctx context.Context, sessionID string) error {
+	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin transaction: %w", err)
 	}
 	defer rollback(tx)
 
 	var exists int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
 		return fmt.Errorf("store: check session %s: %w", sessionID, err)
 	}
 	if exists == 0 {
@@ -443,10 +509,10 @@ func DeleteSessionTree(path, sessionID string) error {
             JOIN descendants ON sessions.parent_id = descendants.id
         )`
 
-	if _, err := tx.Exec(descendants+` DELETE FROM session_data WHERE session_id IN (SELECT id FROM descendants)`, sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, descendants+` DELETE FROM session_data WHERE session_id IN (SELECT id FROM descendants)`, sessionID); err != nil {
 		return fmt.Errorf("store: delete session data for %s: %w", sessionID, err)
 	}
-	if _, err := tx.Exec(descendants+` DELETE FROM sessions WHERE id IN (SELECT id FROM descendants)`, sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, descendants+` DELETE FROM sessions WHERE id IN (SELECT id FROM descendants)`, sessionID); err != nil {
 		return fmt.Errorf("store: delete sessions for %s: %w", sessionID, err)
 	}
 
@@ -457,20 +523,46 @@ func DeleteSessionTree(path, sessionID string) error {
 }
 
 func IsAlreadyExists(err error) bool {
-	return errors.Is(err, errAlreadyExists)
+	return errors.Is(err, ErrAlreadyExists)
 }
 
 func rollback(tx *sql.Tx) {
 	_ = tx.Rollback()
 }
 
-func ensureSession(db *sql.DB, sessionID string) error {
+func ensureSession(ctx context.Context, db *sql.DB, sessionID string) error {
 	var exists int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
 		return fmt.Errorf("store: check session %s: %w", sessionID, err)
 	}
 	if exists == 0 {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 	return nil
+}
+
+func retryBusy(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 20; attempt++ {
+		err = fn()
+		if !isBusy(err) {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return err
+}
+
+func isBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "database is locked")
 }

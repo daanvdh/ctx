@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -22,6 +23,29 @@ func TestLoadEmptyDB(t *testing.T) {
 	}
 	if len(cf.Sessions) != 0 {
 		t.Fatalf("expected empty sessions, got %d", len(cf.Sessions))
+	}
+}
+
+func TestMigrationRecordsSchemaVersion(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_migration.db")
+
+	if _, err := Load(dsn); err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	var version int
+	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if version != 1 {
+		t.Fatalf("schema version = %d, want 1", version)
 	}
 }
 

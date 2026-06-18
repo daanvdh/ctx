@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -9,13 +12,30 @@ import (
 	"strings"
 
 	"ctx/internal/config"
+	"ctx/internal/model"
 	"ctx/internal/render"
 	"ctx/internal/session"
 	"ctx/internal/store"
 )
 
+const (
+	TreeFormatText = "text"
+	TreeFormatJSON = "json"
+)
+
+type Store interface {
+	CreateSession(ctx context.Context, id string, parentID *string) error
+	SetValue(ctx context.Context, sessionID, key, value string) error
+	GetValue(ctx context.Context, sessionID, key string) (string, error)
+	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
+	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
+	DeleteSessionTree(ctx context.Context, sessionID string) error
+}
+
 type App struct {
-	DBPath string
+	store  Store
+	stdout io.Writer
+	stderr io.Writer
 }
 
 func New() (*App, error) {
@@ -23,10 +43,18 @@ func New() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{DBPath: dbPath}, nil
+	return NewWithStore(store.NewSQLite(dbPath)), nil
 }
 
-func (a *App) CreateSession(customID string, explicitParent *string) (string, error) {
+func NewWithStore(s Store) *App {
+	return &App{
+		store:  s,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+	}
+}
+
+func (a *App) CreateSession(ctx context.Context, customID string, explicitParent *string) (string, error) {
 	parentID := explicitParent
 	if parentID == nil {
 		if env := os.Getenv("CTX_ID"); env != "" {
@@ -38,7 +66,7 @@ func (a *App) CreateSession(customID string, explicitParent *string) (string, er
 		if !session.ValidID(customID) {
 			return "", fmt.Errorf("invalid session ID: %s", customID)
 		}
-		return customID, store.CreateSession(a.DBPath, customID, parentID)
+		return customID, a.store.CreateSession(ctx, customID, parentID)
 	}
 
 	for i := 0; i < 8; i++ {
@@ -46,7 +74,7 @@ func (a *App) CreateSession(customID string, explicitParent *string) (string, er
 		if err != nil {
 			return "", err
 		}
-		err = store.CreateSession(a.DBPath, id, parentID)
+		err = a.store.CreateSession(ctx, id, parentID)
 		if err == nil {
 			return id, nil
 		}
@@ -58,16 +86,16 @@ func (a *App) CreateSession(customID string, explicitParent *string) (string, er
 	return "", fmt.Errorf("failed to generate a unique session ID")
 }
 
-func (a *App) SetValue(sessionID, key, value string) error {
-	return store.SetValue(a.DBPath, sessionID, key, value)
+func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error {
+	return a.store.SetValue(ctx, sessionID, key, value)
 }
 
-func (a *App) GetValue(sessionID, key string) (string, error) {
-	return store.GetValue(a.DBPath, sessionID, key)
+func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, error) {
+	return a.store.GetValue(ctx, sessionID, key)
 }
 
-func (a *App) Export(sessionID string) ([]string, error) {
-	resolved, err := store.Resolve(a.DBPath, sessionID)
+func (a *App) Export(ctx context.Context, sessionID string) ([]string, error) {
+	resolved, err := a.store.Resolve(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,31 +110,42 @@ func (a *App) Export(sessionID string) ([]string, error) {
 	return lines, nil
 }
 
-func (a *App) Tree() (string, error) {
-	nodes, err := store.SessionNodes(a.DBPath)
+func (a *App) Tree(ctx context.Context, format string) (string, error) {
+	nodes, err := a.store.SessionNodes(ctx)
 	if err != nil {
 		return "", err
 	}
-	return render.TreeNodes(nodes)
+	switch format {
+	case "", TreeFormatText:
+		return render.TreeNodes(nodes)
+	case TreeFormatJSON:
+		data, err := json.MarshalIndent(nodes, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("render tree json: %w", err)
+		}
+		return string(data) + "\n", nil
+	default:
+		return "", fmt.Errorf("unsupported tree format %q", format)
+	}
 }
 
-func (a *App) Render(sessionID, key string) (string, error) {
-	template, err := store.GetValue(a.DBPath, sessionID, key)
+func (a *App) Render(ctx context.Context, sessionID, key string) (string, error) {
+	template, err := a.store.GetValue(ctx, sessionID, key)
 	if err != nil {
 		return "", err
 	}
-	resolved, err := store.Resolve(a.DBPath, sessionID)
+	resolved, err := a.store.Resolve(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
 	return render.TemplateString(template, resolved)
 }
 
-func (a *App) DeleteSessionTree(sessionID string) error {
-	return store.DeleteSessionTree(a.DBPath, sessionID)
+func (a *App) DeleteSessionTree(ctx context.Context, sessionID string) error {
+	return a.store.DeleteSessionTree(ctx, sessionID)
 }
 
-func (a *App) Execute(sessionID, templateName string) error {
+func (a *App) Execute(ctx context.Context, sessionID, templateName string) error {
 	templatePath, err := config.TriggerPath(templateName)
 	if err != nil {
 		return err
@@ -122,7 +161,7 @@ func (a *App) Execute(sessionID, templateName string) error {
 		return err
 	}
 
-	vars, err := store.Resolve(a.DBPath, sessionID)
+	vars, err := a.store.Resolve(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -133,9 +172,9 @@ func (a *App) Execute(sessionID, templateName string) error {
 	}
 
 	fullCmd := fmt.Sprintf("%s %s", command, strconv.Quote(renderedPrompt))
-	execCmd := exec.Command("sh", "-c", fullCmd)
-	execCmd.Stdout = os.Stdout
-	execCmd.Stderr = os.Stderr
+	execCmd := exec.CommandContext(ctx, "sh", "-c", fullCmd)
+	execCmd.Stdout = a.stdout
+	execCmd.Stderr = a.stderr
 	if err := execCmd.Run(); err != nil {
 		return fmt.Errorf("command execution failed: %w", err)
 	}

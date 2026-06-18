@@ -2,7 +2,10 @@ package render
 
 import (
 	"fmt"
-	"regexp"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"ctx/internal/model"
 	"ctx/internal/session"
@@ -29,24 +32,89 @@ func Render(cf *model.ContextFile, sessionID string, key string) (string, error)
 }
 
 func TemplateString(tmpl string, resolved map[string]string) (string, error) {
-	re := regexp.MustCompile(`\$(?P<var>[A-Za-z_][A-Za-z0-9_]*)`)
+	var out strings.Builder
+	missing := map[string]struct{}{}
 
-	var missing []string
-	result := re.ReplaceAllStringFunc(tmpl, func(m string) string {
-		// m is of form "$VAR"
-		varName := m[1:] // strip the leading '$'
-		if val, ok := resolved[varName]; ok {
-			return val
+	for i := 0; i < len(tmpl); {
+		if tmpl[i] != '$' {
+			out.WriteByte(tmpl[i])
+			i++
+			continue
 		}
-		missing = append(missing, varName)
-		// Return empty string for unresolved placeholders.
-		return ""
-	})
 
-	if len(missing) > 0 {
-		// Report the first missing placeholder for brevity.
-		return "", fmt.Errorf("missing values for placeholders: %v", missing)
+		if i+1 < len(tmpl) && tmpl[i+1] == '$' {
+			if name, end, ok := readVarName(tmpl, i+2); ok {
+				out.WriteByte('$')
+				out.WriteString(name)
+				i = end
+				continue
+			}
+			out.WriteByte('$')
+			i += 2
+			continue
+		}
+
+		name, end, ok := readVarName(tmpl, i+1)
+		if !ok {
+			out.WriteByte('$')
+			i++
+			continue
+		}
+
+		value, ok := resolved[name]
+		if !ok {
+			missing[name] = struct{}{}
+			i = end
+			continue
+		}
+		out.WriteString(value)
+		i = end
 	}
 
-	return result, nil
+	if len(missing) > 0 {
+		names := make([]string, 0, len(missing))
+		for name := range missing {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return "", fmt.Errorf("missing values for placeholders: %v", names)
+	}
+
+	return out.String(), nil
+}
+
+func readVarName(s string, start int) (string, int, bool) {
+	if start >= len(s) {
+		return "", start, false
+	}
+
+	r, size := rune(s[start]), 1
+	if r >= utf8.RuneSelf {
+		r, size = utf8.DecodeRuneInString(s[start:])
+	}
+	if !isVarStart(r) {
+		return "", start, false
+	}
+
+	end := start + size
+	for end < len(s) {
+		r, size = rune(s[end]), 1
+		if r >= utf8.RuneSelf {
+			r, size = utf8.DecodeRuneInString(s[end:])
+		}
+		if !isVarPart(r) {
+			break
+		}
+		end += size
+	}
+
+	return s[start:end], end, true
+}
+
+func isVarStart(r rune) bool {
+	return r == '_' || unicode.IsLetter(r)
+}
+
+func isVarPart(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }

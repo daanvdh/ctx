@@ -4,37 +4,32 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
 )
 
 // Delete handles the `ctx delete <session_id>` command.
 // It removes the specified session and any child sessions (recursively),
 // along with all stored key/value pairs belonging to those sessions.
-func Delete(args []string) int {
+func Delete(ctx context.Context, args []string) error {
 	// Handle help flag similar to other commands.
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
 			fmt.Println(`Usage: ctx delete <session_id>
 
 Delete the specified session, all its child sessions and their variables.`)
-			return 0
+			return nil
 		}
 	}
 
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "ctx: delete: usage: ctx delete <session_id>\n")
-		return 1
+		return usage("delete", "ctx delete <session_id>")
 	}
 	target := args[0]
 
-	a, code := newApp("delete")
-	if code != 0 {
-		return code
+	a, err := newApp()
+	if err != nil {
+		return err
 	}
-	if err := a.DeleteSessionTree(target); err != nil {
-		printErr("delete", err)
-		return 1
-	}
-	return 0
+	return a.DeleteSessionTree(ctx, target)
 }

@@ -13,7 +13,7 @@ type Session struct {
 }
 
 type SessionNode struct {
-	ID     string
-	Parent *string
-	Data   map[string]string
+	ID     string            `json:"id"`
+	Parent *string           `json:"parent,omitempty"`
+	Data   map[string]string `json:"data,omitempty"`
 }

@@ -1,30 +1,28 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
 )
 
-func Export(args []string) int {
+func Export(ctx context.Context, args []string) error {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "ctx: export: usage: ctx export <session_id>\n")
-		return 1
+		return usage("export", "ctx export <session_id>")
 	}
 
 	sessionID := args[0]
 
-	a, code := newApp("export")
-	if code != 0 {
-		return code
-	}
-	lines, err := a.Export(sessionID)
+	a, err := newApp()
 	if err != nil {
-		printErr("export", err)
-		return 1
+		return err
+	}
+	lines, err := a.Export(ctx, sessionID)
+	if err != nil {
+		return err
 	}
 	for _, line := range lines {
 		fmt.Println(line)
 	}
 
-	return 0
+	return nil
 }

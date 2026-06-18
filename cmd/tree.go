@@ -1,33 +1,43 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
+	"strings"
 )
 
-func Tree(args []string) int {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "ctx: tree: unexpected error: %v\n", r)
-			os.Exit(1)
+func Tree(ctx context.Context, args []string) error {
+	format := "text"
+	for i := 0; i < len(args); {
+		switch args[i] {
+		case "--format":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing argument for --format")
+			}
+			format = args[i+1]
+			i += 2
+		case "--json":
+			format = "json"
+			i++
+		case "--help", "-h":
+			fmt.Println(`Usage: ctx tree [--format text|json]
+
+Show the session tree.`)
+			return nil
+		default:
+			return usage("tree", "ctx tree [--format text|json]")
 		}
-	}()
-
-	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "ctx: tree: usage: ctx tree\n")
-		return 1
 	}
 
-	a, code := newApp("tree")
-	if code != 0 {
-		return code
-	}
-	result, err := a.Tree()
+	a, err := newApp()
 	if err != nil {
-		printErr("tree", err)
-		return 1
+		return err
+	}
+	result, err := a.Tree(ctx, strings.ToLower(format))
+	if err != nil {
+		return err
 	}
 
 	fmt.Print(result)
-	return 0
+	return nil
 }

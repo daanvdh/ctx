@@ -4,15 +4,15 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
 )
 
 // Execute handles the `ctx execute <session> <template>` command.
 // It loads a template file from $HOME/.config/ctx/triggers/<template>,
 // substitutes placeholders ($VAR) using session variables (including ancestors),
 // and runs the specified command with the rendered prompt as a quoted argument.
-func Execute(args []string) int {
+func Execute(ctx context.Context, args []string) error {
 	// Show help if requested.
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
@@ -23,24 +23,19 @@ The first line should define the command to run, e.g.:`)
 			fmt.Println("    command=pi        # Program invoked with the rendered prompt.")
 			fmt.Println(`---
 <prompt text possibly containing placeholders like $VAR>`)
-			return 0
+			return nil
 		}
 	}
 
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "ctx: execute: usage: ctx execute <session> <template>\n")
-		return 1
+		return usage("execute", "ctx execute <session> <template>")
 	}
 	sessionID := args[0]
 	tmplName := args[1]
 
-	a, code := newApp("execute")
-	if code != 0 {
-		return code
+	a, err := newApp()
+	if err != nil {
+		return err
 	}
-	if err := a.Execute(sessionID, tmplName); err != nil {
-		printErr("execute", err)
-		return 1
-	}
-	return 0
+	return a.Execute(ctx, sessionID, tmplName)
 }

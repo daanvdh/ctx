@@ -1,21 +1,21 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
 
 	"ctx/internal/app"
 )
 
-func newApp(command string) (*app.App, int) {
-	a, err := app.New()
-	if err != nil {
-		printErr(command, err)
-		return nil, 1
-	}
-	return a, 0
+type Command struct {
+	Name string
+	Run  func(context.Context, []string) error
 }
 
-func printErr(command string, err error) {
-	fmt.Fprintf(os.Stderr, "ctx: %s: %v\n", command, err)
+func newApp() (*app.App, error) {
+	return app.New()
+}
+
+func usage(_ string, text string) error {
+	return fmt.Errorf("usage: %s", text)
 }

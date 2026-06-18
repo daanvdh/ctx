@@ -1,10 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 )
 
-func New(args []string) int {
+func New(ctx context.Context, args []string) error {
 	// If --help flag is present, show usage and exit.
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
@@ -13,7 +14,7 @@ func New(args []string) int {
 Create a new session. If a custom ID is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated.
 Parent can be set explicitly via --parent flag, or implicitly from the CTX_ID environment variable if present.
 Use "ctx new --help" to display this help message.`)
-			return 0
+			return nil
 		}
 	}
 
@@ -23,8 +24,7 @@ Use "ctx new --help" to display this help message.`)
 		arg := args[i]
 		if arg == "--parent" {
 			if i+1 >= len(args) {
-				printErr("new", fmt.Errorf("missing argument for --parent"))
-				return 1
+				return fmt.Errorf("missing argument for --parent")
 			}
 			parent := args[i+1]
 			explicitParent = &parent
@@ -34,22 +34,20 @@ Use "ctx new --help" to display this help message.`)
 		if customID == "" {
 			customID = arg
 		} else {
-			printErr("new", fmt.Errorf("unexpected extra argument: %s", arg))
-			return 1
+			return fmt.Errorf("unexpected extra argument: %s", arg)
 		}
 		i++
 	}
 
-	a, code := newApp("new")
-	if code != 0 {
-		return code
-	}
-	outID, err := a.CreateSession(customID, explicitParent)
+	a, err := newApp()
 	if err != nil {
-		printErr("new", err)
-		return 1
+		return err
+	}
+	outID, err := a.CreateSession(ctx, customID, explicitParent)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println(outID)
-	return 0
+	return nil
 }

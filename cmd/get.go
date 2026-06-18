@@ -1,28 +1,26 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
 )
 
-func Get(args []string) int {
+func Get(ctx context.Context, args []string) error {
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "ctx: get: usage: ctx get <session_id> <key>\n")
-		return 1
+		return usage("get", "ctx get <session_id> <key>")
 	}
 
 	sessionID, key := args[0], args[1]
 
-	a, code := newApp("get")
-	if code != 0 {
-		return code
-	}
-	value, err := a.GetValue(sessionID, key)
+	a, err := newApp()
 	if err != nil {
-		printErr("get", err)
-		return 1
+		return err
+	}
+	value, err := a.GetValue(ctx, sessionID, key)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println(value)
-	return 0
+	return nil
 }
