@@ -142,7 +142,7 @@ func (a *App) Tree(ctx context.Context, format string) (string, error) {
 	}
 }
 
-func (a *App) Render(ctx context.Context, sessionID, key string) (string, error) {
+func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
 	template, err := a.store.GetValue(ctx, sessionID, key)
 	if err != nil {
 		return "", err
@@ -151,7 +151,7 @@ func (a *App) Render(ctx context.Context, sessionID, key string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return render.TemplateString(template, resolved)
+	return render.TemplateStringWithOptions(template, resolved, render.TemplateOptions{IgnoreMissing: ignoreMissing})
 }
 
 func (a *App) DeleteSessionTree(ctx context.Context, sessionID string) error {

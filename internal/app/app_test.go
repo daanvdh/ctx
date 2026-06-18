@@ -88,7 +88,7 @@ func TestRenderUsesInjectedStore(t *testing.T) {
 		resolved: map[string]string{"ISSUE": "22"},
 	})
 
-	got, err := a.Render(context.Background(), "s1", "PROMPT")
+	got, err := a.Render(context.Background(), "s1", "PROMPT", false)
 	if err != nil {
 		t.Fatalf("Render error: %v", err)
 	}

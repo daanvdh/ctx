@@ -67,3 +67,13 @@ func TestTemplateStringMissingPlaceholdersDeterministic(t *testing.T) {
 		t.Fatalf("error = %q, want sorted unique placeholders [A B]", err.Error())
 	}
 }
+
+func TestTemplateStringIgnoreMissing(t *testing.T) {
+	got, err := TemplateStringWithOptions("known $A missing $B", map[string]string{"A": "1"}, TemplateOptions{IgnoreMissing: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "known 1 missing $B" {
+		t.Fatalf("got %q, want missing placeholder preserved", got)
+	}
+}

@@ -32,6 +32,14 @@ func Render(cf *model.ContextFile, sessionID string, key string) (string, error)
 }
 
 func TemplateString(tmpl string, resolved map[string]string) (string, error) {
+	return TemplateStringWithOptions(tmpl, resolved, TemplateOptions{})
+}
+
+type TemplateOptions struct {
+	IgnoreMissing bool
+}
+
+func TemplateStringWithOptions(tmpl string, resolved map[string]string, opts TemplateOptions) (string, error) {
 	var out strings.Builder
 	missing := map[string]struct{}{}
 
@@ -63,7 +71,12 @@ func TemplateString(tmpl string, resolved map[string]string) (string, error) {
 
 		value, ok := resolved[name]
 		if !ok {
-			missing[name] = struct{}{}
+			if opts.IgnoreMissing {
+				out.WriteByte('$')
+				out.WriteString(name)
+			} else {
+				missing[name] = struct{}{}
+			}
 			i = end
 			continue
 		}
