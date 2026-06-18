@@ -31,6 +31,7 @@ func (f *fakeStore) SetValue(_ context.Context, sessionID, key, value string) er
 		f.values = make(map[string]string)
 	}
 	f.values[sessionID+"."+key] = value
+	f.values[key] = value
 	return f.err
 }
 
@@ -159,6 +160,66 @@ func TestTriggerTemplatePathFindsExtension(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
+func TestTriggerDefinitionMatchesTransition(t *testing.T) {
+	def := TriggerDefinition{Key: "STATUS", Match: "DONE"}
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "PENDING", NewValue: "DONE"})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected transition into matching value to fire")
+	}
+
+	matches, err = def.Matches(TriggerChange{Key: "STATUS", OldValue: "DONE", NewValue: "DONE"})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected already-matching value not to fire")
+	}
+}
+
+func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "any-change=true\nkey=STATUS\ncommand=echo\n---\nhello")
+	if err == nil {
+		t.Fatal("expected any-change with matcher to fail")
+	}
+}
+
+func TestSetValueExecutesMatchingTrigger(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/echo\n---\nStory $STORY"
+	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{
+		values:   map[string]string{"STATUS": "PENDING"},
+		resolved: map[string]string{"STORY": "ship it"},
+	}
+	a := NewWithStore(fake)
+
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	foundLog := false
+	for key, value := range fake.values {
+		if strings.HasPrefix(key, "s1.trigger_log.") {
+			foundLog = strings.Contains(value, `"trigger":"done"`) && strings.Contains(value, "Story ship it")
+			break
+		}
+	}
+	if !foundLog {
+		t.Fatalf("expected trigger log in values, got %#v", fake.values)
 	}
 }
 

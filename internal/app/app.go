@@ -88,7 +88,22 @@ func (a *App) CreateSession(ctx context.Context, customID string, explicitParent
 }
 
 func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error {
-	return a.store.SetValue(ctx, sessionID, key, value)
+	oldValue, oldErr := a.store.GetValue(ctx, sessionID, key)
+	if err := a.store.SetValue(ctx, sessionID, key, value); err != nil {
+		return err
+	}
+	if os.Getenv("CTX_SUPPRESS_TRIGGERS") == "1" {
+		return nil
+	}
+	if oldErr != nil {
+		oldValue = ""
+	}
+	return a.ExecuteMatchingTriggers(ctx, TriggerChange{
+		SessionID: sessionID,
+		Key:       key,
+		OldValue:  oldValue,
+		NewValue:  value,
+	})
 }
 
 func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, error) {
@@ -175,7 +190,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return fmt.Errorf("failed to read template %s: %w", templatePath, err)
 	}
 
-	command, promptTemplate, err := parseTriggerTemplate(string(data))
+	def, err := parseTriggerDefinition(templatePath, string(data))
 	if err != nil {
 		return err
 	}
@@ -185,12 +200,12 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	renderedPrompt, err := render.TemplateString(promptTemplate, vars)
+	renderedPrompt, err := render.TemplateString(def.PromptTemplate, vars)
 	if err != nil {
 		return err
 	}
 
-	commandParts := strings.Fields(command)
+	commandParts := strings.Fields(def.Command)
 	if len(commandParts) == 0 {
 		return fmt.Errorf("empty command in template")
 	}
@@ -246,37 +261,4 @@ func sortedKeys(m map[string]string) []string {
 
 func shellSingleQuote(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'"
-}
-
-func parseTriggerTemplate(content string) (string, string, error) {
-	parts := strings.SplitN(content, "\n---\n", 2)
-	if len(parts) != 2 {
-		parts = strings.SplitN(content, "---", 2)
-	}
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("malformed template: missing '---' separator")
-	}
-
-	var commandLine string
-	for _, line := range strings.Split(parts[0], "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			commandLine = trimmed
-			break
-		}
-	}
-
-	if !strings.HasPrefix(commandLine, "command=") {
-		return "", "", fmt.Errorf("missing 'command=' definition in template")
-	}
-
-	command := strings.TrimSpace(strings.TrimPrefix(commandLine, "command="))
-	if i := strings.Index(command, "#"); i != -1 {
-		command = strings.TrimSpace(command[:i])
-	}
-	if command == "" {
-		return "", "", fmt.Errorf("empty command in template")
-	}
-
-	return command, parts[1], nil
 }
