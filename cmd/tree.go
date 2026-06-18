@@ -3,9 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-
-	"ctx/internal/render"
-	"ctx/internal/store"
 )
 
 func Tree(args []string) int {
@@ -21,21 +18,13 @@ func Tree(args []string) int {
 		return 1
 	}
 
-	path, err := getCtxPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: tree: %v\n", err)
-		return 1
+	a, code := newApp("tree")
+	if code != 0 {
+		return code
 	}
-
-	cf, err := store.Load(path)
+	result, err := a.Tree()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: tree: %v\n", err)
-		return 1
-	}
-
-	result, err := render.Tree(cf)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: tree: %v\n", err)
+		printErr("tree", err)
 		return 1
 	}
 

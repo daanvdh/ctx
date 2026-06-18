@@ -32,7 +32,7 @@ func main() {
 	case "render":
 		exitCode = cmd.Render(args)
 	case "delete":
-        exitCode = cmd.Delete(args)
+		exitCode = cmd.Delete(args)
 	case "execute":
 		exitCode = cmd.Execute(args)
 	default:
