@@ -11,3 +11,9 @@ type Session struct {
 	Created time.Time         `json:"created"`
 	Data    map[string]string `json:"data"`
 }
+
+type SessionNode struct {
+	ID     string
+	Parent *string
+	Data   map[string]string
+}

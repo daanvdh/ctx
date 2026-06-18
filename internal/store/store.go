@@ -253,6 +253,163 @@ func SetValue(path, sessionID, key, value string) error {
 	return nil
 }
 
+func GetValue(path, sessionID, key string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	db, err := initDB(path)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	if err := ensureSession(db, sessionID); err != nil {
+		return "", err
+	}
+
+	const query = `
+        WITH RECURSIVE chain(id, depth) AS (
+            SELECT id, 0 FROM sessions WHERE id = ?
+            UNION ALL
+            SELECT sessions.parent_id, chain.depth + 1
+            FROM sessions
+            JOIN chain ON sessions.id = chain.id
+            WHERE sessions.parent_id IS NOT NULL
+              AND sessions.parent_id != ''
+              AND chain.depth < 49
+        )
+        SELECT session_data.value
+        FROM chain
+        JOIN session_data ON session_data.session_id = chain.id
+        WHERE session_data.key = ?
+        ORDER BY chain.depth
+        LIMIT 1`
+
+	var value string
+	if err := db.QueryRow(query, sessionID, key).Scan(&value); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
+		}
+		return "", fmt.Errorf("store: get data %s.%s: %w", sessionID, key, err)
+	}
+	return value, nil
+}
+
+func Resolve(path, sessionID string) (map[string]string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	db, err := initDB(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	if err := ensureSession(db, sessionID); err != nil {
+		return nil, err
+	}
+
+	const query = `
+        WITH RECURSIVE chain(id, depth) AS (
+            SELECT id, 0 FROM sessions WHERE id = ?
+            UNION ALL
+            SELECT sessions.parent_id, chain.depth + 1
+            FROM sessions
+            JOIN chain ON sessions.id = chain.id
+            WHERE sessions.parent_id IS NOT NULL
+              AND sessions.parent_id != ''
+              AND chain.depth < 49
+        )
+        SELECT session_data.key, session_data.value
+        FROM chain
+        JOIN session_data ON session_data.session_id = chain.id
+        ORDER BY chain.depth`
+
+	rows, err := db.Query(query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("store: resolve data for %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	resolved := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, fmt.Errorf("store: scan resolved data: %w", err)
+		}
+		if _, exists := resolved[key]; !exists {
+			resolved[key] = value
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate resolved data: %w", err)
+	}
+
+	return resolved, nil
+}
+
+func SessionNodes(path string) ([]model.SessionNode, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	db, err := initDB(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`SELECT id, parent_id FROM sessions ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: query session nodes: %w", err)
+	}
+	defer rows.Close()
+
+	nodesByID := make(map[string]*model.SessionNode)
+	order := []string{}
+	for rows.Next() {
+		var id string
+		var parentID sql.NullString
+		if err := rows.Scan(&id, &parentID); err != nil {
+			return nil, fmt.Errorf("store: scan session node: %w", err)
+		}
+		node := &model.SessionNode{ID: id, Data: make(map[string]string)}
+		if parentID.Valid && parentID.String != "" {
+			parent := parentID.String
+			node.Parent = &parent
+		}
+		nodesByID[id] = node
+		order = append(order, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate session nodes: %w", err)
+	}
+
+	dataRows, err := db.Query(`SELECT session_id, key, value FROM session_data ORDER BY session_id, key`)
+	if err != nil {
+		return nil, fmt.Errorf("store: query session node data: %w", err)
+	}
+	defer dataRows.Close()
+
+	for dataRows.Next() {
+		var sessionID, key, value string
+		if err := dataRows.Scan(&sessionID, &key, &value); err != nil {
+			return nil, fmt.Errorf("store: scan session node data: %w", err)
+		}
+		if node, ok := nodesByID[sessionID]; ok {
+			node.Data[key] = value
+		}
+	}
+	if err := dataRows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate session node data: %w", err)
+	}
+
+	nodes := make([]model.SessionNode, 0, len(order))
+	for _, id := range order {
+		nodes = append(nodes, *nodesByID[id])
+	}
+	return nodes, nil
+}
+
 func DeleteSessionTree(path, sessionID string) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -305,4 +462,15 @@ func IsAlreadyExists(err error) bool {
 
 func rollback(tx *sql.Tx) {
 	_ = tx.Rollback()
+}
+
+func ensureSession(db *sql.DB, sessionID string) error {
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
+		return fmt.Errorf("store: check session %s: %w", sessionID, err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	return nil
 }

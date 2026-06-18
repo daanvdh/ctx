@@ -112,6 +112,96 @@ func TestSetValueCreatesAndUpdatesKey(t *testing.T) {
 	}
 }
 
+func TestGetValueReadsNearestAncestor(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_get_value.db")
+
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	parent := "root"
+	if err := CreateSession(dsn, "child", &parent); err != nil {
+		t.Fatalf("CreateSession child error: %v", err)
+	}
+	if err := SetValue(dsn, "root", "KEY", "root-value"); err != nil {
+		t.Fatalf("SetValue root error: %v", err)
+	}
+	if err := SetValue(dsn, "child", "KEY", "child-value"); err != nil {
+		t.Fatalf("SetValue child error: %v", err)
+	}
+
+	got, err := GetValue(dsn, "child", "KEY")
+	if err != nil {
+		t.Fatalf("GetValue error: %v", err)
+	}
+	if got != "child-value" {
+		t.Fatalf("GetValue = %q, want child-value", got)
+	}
+}
+
+func TestResolveReadsVisibleScope(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_resolve.db")
+
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	parent := "root"
+	if err := CreateSession(dsn, "child", &parent); err != nil {
+		t.Fatalf("CreateSession child error: %v", err)
+	}
+	if err := SetValue(dsn, "root", "ROOT_ONLY", "root"); err != nil {
+		t.Fatalf("SetValue root-only error: %v", err)
+	}
+	if err := SetValue(dsn, "root", "SHADOW", "root"); err != nil {
+		t.Fatalf("SetValue root shadow error: %v", err)
+	}
+	if err := SetValue(dsn, "child", "SHADOW", "child"); err != nil {
+		t.Fatalf("SetValue child shadow error: %v", err)
+	}
+
+	resolved, err := Resolve(dsn, "child")
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+	if resolved["ROOT_ONLY"] != "root" {
+		t.Fatalf("ROOT_ONLY = %q, want root", resolved["ROOT_ONLY"])
+	}
+	if resolved["SHADOW"] != "child" {
+		t.Fatalf("SHADOW = %q, want child", resolved["SHADOW"])
+	}
+}
+
+func TestSessionNodes(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_session_nodes.db")
+
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	parent := "root"
+	if err := CreateSession(dsn, "child", &parent); err != nil {
+		t.Fatalf("CreateSession child error: %v", err)
+	}
+	if err := SetValue(dsn, "child", "KEY", "value"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	nodes, err := SessionNodes(dsn)
+	if err != nil {
+		t.Fatalf("SessionNodes error: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	if nodes[0].ID != "child" || nodes[0].Parent == nil || *nodes[0].Parent != "root" {
+		t.Fatalf("first node = %+v, want child with root parent", nodes[0])
+	}
+	if nodes[0].Data["KEY"] != "value" {
+		t.Fatalf("child KEY = %q, want value", nodes[0].Data["KEY"])
+	}
+}
+
 func TestDeleteSessionTree(t *testing.T) {
 	tmp := t.TempDir()
 	dsn := filepath.Join(tmp, "test_delete_tree.db")

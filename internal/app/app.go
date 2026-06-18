@@ -63,19 +63,11 @@ func (a *App) SetValue(sessionID, key, value string) error {
 }
 
 func (a *App) GetValue(sessionID, key string) (string, error) {
-	cf, err := store.Load(a.DBPath)
-	if err != nil {
-		return "", err
-	}
-	return session.Get(cf, sessionID, key)
+	return store.GetValue(a.DBPath, sessionID, key)
 }
 
 func (a *App) Export(sessionID string) ([]string, error) {
-	cf, err := store.Load(a.DBPath)
-	if err != nil {
-		return nil, err
-	}
-	resolved, err := session.Resolve(cf, sessionID)
+	resolved, err := store.Resolve(a.DBPath, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -91,19 +83,23 @@ func (a *App) Export(sessionID string) ([]string, error) {
 }
 
 func (a *App) Tree() (string, error) {
-	cf, err := store.Load(a.DBPath)
+	nodes, err := store.SessionNodes(a.DBPath)
 	if err != nil {
 		return "", err
 	}
-	return render.Tree(cf)
+	return render.TreeNodes(nodes)
 }
 
 func (a *App) Render(sessionID, key string) (string, error) {
-	cf, err := store.Load(a.DBPath)
+	template, err := store.GetValue(a.DBPath, sessionID, key)
 	if err != nil {
 		return "", err
 	}
-	return render.Render(cf, sessionID, key)
+	resolved, err := store.Resolve(a.DBPath, sessionID)
+	if err != nil {
+		return "", err
+	}
+	return render.TemplateString(template, resolved)
 }
 
 func (a *App) DeleteSessionTree(sessionID string) error {
@@ -126,11 +122,7 @@ func (a *App) Execute(sessionID, templateName string) error {
 		return err
 	}
 
-	cf, err := store.Load(a.DBPath)
-	if err != nil {
-		return fmt.Errorf("failed to load context file: %w", err)
-	}
-	vars, err := session.Resolve(cf, sessionID)
+	vars, err := store.Resolve(a.DBPath, sessionID)
 	if err != nil {
 		return err
 	}
