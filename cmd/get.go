@@ -6,11 +6,19 @@ import (
 )
 
 func Get(ctx context.Context, args []string) error {
-	if len(args) != 2 {
-		return usage("get", "ctx get <session_id> <key>")
+	if len(args) != 1 && len(args) != 2 {
+		return usage("get", "ctx get [session_id] <key>")
 	}
 
-	sessionID, key := args[0], args[1]
+	sessionID, usedArg, err := sessionArg(args, 0)
+	if err != nil {
+		return err
+	}
+	offset := 0
+	if usedArg {
+		offset = 1
+	}
+	key := args[offset]
 
 	a, err := newApp()
 	if err != nil {

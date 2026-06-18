@@ -82,6 +82,29 @@ func TestExportRejectsInvalidShellKey(t *testing.T) {
 	}
 }
 
+func TestExportIncludesCTXID(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolved: map[string]string{"KEY": "value"}})
+	lines, err := a.Export(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("Export error: %v", err)
+	}
+	if lines[0] != "export CTX_ID='s1'" {
+		t.Fatalf("first export line = %q, want CTX_ID", lines[0])
+	}
+}
+
+func TestShow(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolved: map[string]string{"B": "2", "A": "1"}})
+	lines, err := a.Show(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := []string{"A = 1", "B = 2"}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("Show = %v, want %v", lines, want)
+	}
+}
+
 func TestRenderUsesInjectedStore(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE"},

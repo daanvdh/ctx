@@ -22,10 +22,13 @@ Delete the specified session, all its child sessions and their variables.`)
 		}
 	}
 
-	if len(args) != 1 {
-		return usage("delete", "ctx delete <session_id>")
+	if len(args) > 1 {
+		return usage("delete", "ctx delete [session_id]")
 	}
-	target := args[0]
+	target, _, err := sessionArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	a, err := newApp()
 	if err != nil {

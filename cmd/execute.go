@@ -27,11 +27,18 @@ The first line should define the command to run, e.g.:`)
 		}
 	}
 
-	if len(args) != 2 {
-		return usage("execute", "ctx execute <session> <template>")
+	if len(args) != 1 && len(args) != 2 {
+		return usage("execute", "ctx execute [session] <template>")
 	}
-	sessionID := args[0]
-	tmplName := args[1]
+	sessionID, usedArg, err := sessionArg(args, 0)
+	if err != nil {
+		return err
+	}
+	offset := 0
+	if usedArg {
+		offset = 1
+	}
+	tmplName := args[offset]
 
 	a, err := newApp()
 	if err != nil {

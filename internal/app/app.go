@@ -100,7 +100,8 @@ func (a *App) Export(ctx context.Context, sessionID string) ([]string, error) {
 		return nil, err
 	}
 
-	lines := make([]string, 0, len(resolved))
+	lines := make([]string, 0, len(resolved)+1)
+	lines = append(lines, fmt.Sprintf("export CTX_ID=%s", shellSingleQuote(sessionID)))
 	for _, key := range sortedKeys(resolved) {
 		if !session.ValidShellKey(key) {
 			return nil, fmt.Errorf("key %s is not a valid shell variable name", key)

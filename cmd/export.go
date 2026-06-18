@@ -6,11 +6,14 @@ import (
 )
 
 func Export(ctx context.Context, args []string) error {
-	if len(args) != 1 {
-		return usage("export", "ctx export <session_id>")
+	if len(args) > 1 {
+		return usage("export", "ctx export [session_id]")
 	}
 
-	sessionID := args[0]
+	sessionID, _, err := sessionArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	a, err := newApp()
 	if err != nil {
