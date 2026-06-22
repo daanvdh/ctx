@@ -102,9 +102,6 @@ https://your-mac.your-tailnet.ts.net/ctx-mcp
 This POC does not implement OAuth, so only run it against trusted clients and do not
 leave an unauthenticated tunnel open.
 
-The older `ctx-mcp` compatibility binary can still be built with
-`make build-mcp`, but `ctx serve` is the preferred command for new setups.
-
 Available tools:
 
 | Tool | Description |
