@@ -94,6 +94,25 @@ func TestParseServeArgsUsesSettingsDefaults(t *testing.T) {
 	}
 }
 
+func TestParseServeArgsDebugFlagAndEnv(t *testing.T) {
+	opts, err := parseServeArgsWithSettings([]string{"--http", "--debug"}, config.Settings{})
+	if err != nil {
+		t.Fatalf("parseServeArgs error: %v", err)
+	}
+	if !opts.debug {
+		t.Fatal("debug = false, want true from flag")
+	}
+
+	t.Setenv("CTX_MCP_DEBUG", "true")
+	opts, err = parseServeArgsWithSettings([]string{"--http"}, config.Settings{})
+	if err != nil {
+		t.Fatalf("parseServeArgs error: %v", err)
+	}
+	if !opts.debug {
+		t.Fatal("debug = false, want true from CTX_MCP_DEBUG")
+	}
+}
+
 func TestParseServeArgsRejectsExtraArgs(t *testing.T) {
 	if _, err := parseServeArgsWithSettings([]string{"extra"}, config.Settings{}); err == nil {
 		t.Fatal("expected extra argument error")

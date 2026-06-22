@@ -21,6 +21,7 @@ type serveOptions struct {
 	serverName     string
 	allowedOrigins []string
 	auth           mcp.AuthConfig
+	debug          bool
 }
 
 func Serve(ctx context.Context, args []string) error {
@@ -43,11 +44,18 @@ func Serve(ctx context.Context, args []string) error {
 			ServerName:     opts.serverName,
 			Auth:           auth,
 		}))
+		handler := http.Handler(mux)
+		if opts.debug {
+			handler = mcp.NewAccessLogHandler(handler, os.Stderr)
+		}
 		fmt.Fprintf(os.Stderr, "ctx: serve: listening on http://%s%s\n", opts.addr, opts.path)
 		if auth.Enabled() {
 			fmt.Fprintf(os.Stderr, "ctx: serve: auth enabled; publish http://%s, not only http://%s%s, so OAuth discovery routes are reachable\n", opts.addr, opts.addr, opts.path)
 		}
-		return http.ListenAndServe(opts.addr, mux)
+		if opts.debug {
+			fmt.Fprintln(os.Stderr, "ctx: serve: debug access logging enabled")
+		}
+		return http.ListenAndServe(opts.addr, handler)
 	}
 
 	return mcp.NewServer(os.Stdin, os.Stdout).Serve(ctx)
@@ -69,7 +77,7 @@ func parseServeArgs(args []string) (*serveOptions, error) {
 func parseServeArgsWithSettings(args []string, settings config.Settings) (*serveOptions, error) {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
-			fmt.Println(`Usage: ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>]
+			fmt.Println(`Usage: ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]
 
 Serve the ctx MCP server.
 
@@ -90,11 +98,12 @@ By default, ctx serve uses MCP stdio transport. Use --http to serve Streamable H
 	path := fs.String("path", defaultPath, "HTTP MCP endpoint path")
 	serverName := fs.String("name", defaultName, "MCP server name reported to clients")
 	allowedOrigins := fs.String("allowed-origins", defaultOrigins, "comma-separated Origin values allowed for browser-originated requests")
+	debug := fs.Bool("debug", envBool("CTX_MCP_DEBUG"), "log HTTP MCP and OAuth requests to stderr")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 	if fs.NArg() != 0 {
-		return nil, usage("serve", "ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>]")
+		return nil, usage("serve", "ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]")
 	}
 
 	resolvedPath := pathDefault(*path, "/mcp")
@@ -113,6 +122,7 @@ By default, ctx serve uses MCP stdio transport. Use --http to serve Streamable H
 			ResourcePath:      resolvedPath,
 			ServerName:        resolvedName,
 		},
+		debug: *debug,
 	}, nil
 }
 
@@ -153,4 +163,13 @@ func envDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

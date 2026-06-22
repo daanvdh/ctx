@@ -220,6 +220,13 @@ func TestHTTPAuthAuthorizationCodeFlowIssuesUsableBearerToken(t *testing.T) {
 	if metaResp.Code != http.StatusOK {
 		t.Fatalf("metadata status = %d, want 200: %s", metaResp.Code, metaResp.Body.String())
 	}
+	var metaBody map[string]any
+	if err := json.Unmarshal(metaResp.Body.Bytes(), &metaBody); err != nil {
+		t.Fatalf("unmarshal metadata response: %v", err)
+	}
+	if _, ok := metaBody["scopes_supported"].([]any); !ok {
+		t.Fatalf("scopes_supported = %#v, want array", metaBody["scopes_supported"])
+	}
 
 	verifier := "test-verifier"
 	challenge := testPKCEChallenge(verifier)
@@ -276,6 +283,30 @@ func TestHTTPAuthAuthorizationCodeFlowIssuesUsableBearerToken(t *testing.T) {
 	mux.ServeHTTP(mcpResp, req)
 	if mcpResp.Code != http.StatusOK {
 		t.Fatalf("MCP status = %d, want 200: %s", mcpResp.Code, mcpResp.Body.String())
+	}
+}
+
+func TestAccessLogHandlerLogsRequestWithoutToken(t *testing.T) {
+	var log bytes.Buffer
+	handler := NewAccessLogHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("ok"))
+	}), &log)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	text := log.String()
+	for _, want := range []string{"method=POST", "path=/mcp", "status=202", "auth=bearer"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("log = %q, want substring %q", text, want)
+		}
+	}
+	if strings.Contains(text, "secret-token") {
+		t.Fatalf("log leaked bearer token: %q", text)
 	}
 }
 

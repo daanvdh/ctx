@@ -139,6 +139,53 @@ func NewHTTPHandlerWithOptions(newApp func() (*app.App, error), opts HTTPOptions
 	})
 }
 
+type accessLogResponseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *accessLogResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *accessLogResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(data)
+	w.bytes += n
+	return n, err
+}
+
+func NewAccessLogHandler(next http.Handler, dst io.Writer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		lw := &accessLogResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(lw, r)
+		status := lw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		auth := "no"
+		if bearerToken(r.Header.Get("Authorization")) != "" {
+			auth = "bearer"
+		}
+		fmt.Fprintf(dst, "ctx: http: method=%s path=%s status=%d bytes=%d duration=%s auth=%s accept=%q origin=%q ua=%q\n",
+			r.Method,
+			r.URL.Path,
+			status,
+			lw.bytes,
+			time.Since(start).Round(time.Millisecond),
+			auth,
+			r.Header.Get("Accept"),
+			r.Header.Get("Origin"),
+			r.UserAgent(),
+		)
+	})
+}
+
 func (s *Server) Serve(ctx context.Context) error {
 	for {
 		msg, err := readMessage(s.in)
@@ -245,6 +292,7 @@ func (a *HTTPAuth) handleProtectedResourceMetadata(w http.ResponseWriter, r *htt
 		"authorization_servers":    []string{origin},
 		"bearer_methods_supported": []string{"header"},
 		"resource_name":            a.cfg.ServerName,
+		"scopes_supported":         []string{},
 	})
 }
 
