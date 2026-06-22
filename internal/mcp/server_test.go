@@ -293,20 +293,22 @@ func TestAccessLogHandlerLogsRequestWithoutToken(t *testing.T) {
 		_, _ = w.Write([]byte("ok"))
 	}), &log)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ctx_get","arguments":{"session_id":"secret-session"}}}`))
 	req.Header.Set("Authorization", "Bearer secret-token")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
 	text := log.String()
-	for _, want := range []string{"method=POST", "path=/mcp", "status=202", "auth=bearer"} {
+	for _, want := range []string{"method=POST", "path=/mcp", "status=202", "auth=bearer", `rpc="tools/call:ctx_get"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("log = %q, want substring %q", text, want)
 		}
 	}
-	if strings.Contains(text, "secret-token") {
-		t.Fatalf("log leaked bearer token: %q", text)
+	for _, secret := range []string{"secret-token", "secret-session"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("log leaked secret %q: %q", secret, text)
+		}
 	}
 }
 

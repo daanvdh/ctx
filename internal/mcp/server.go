@@ -162,6 +162,14 @@ func (w *accessLogResponseWriter) Write(data []byte) (int, error) {
 func NewAccessLogHandler(next http.Handler, dst io.Writer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		rpc := ""
+		if r.Body != nil && r.Method == http.MethodPost {
+			body, err := io.ReadAll(r.Body)
+			if err == nil {
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				rpc = rpcLogSummary(body)
+			}
+		}
 		lw := &accessLogResponseWriter{ResponseWriter: w}
 		next.ServeHTTP(lw, r)
 		status := lw.status
@@ -172,18 +180,38 @@ func NewAccessLogHandler(next http.Handler, dst io.Writer) http.Handler {
 		if bearerToken(r.Header.Get("Authorization")) != "" {
 			auth = "bearer"
 		}
-		fmt.Fprintf(dst, "ctx: http: method=%s path=%s status=%d bytes=%d duration=%s auth=%s accept=%q origin=%q ua=%q\n",
+		rpcPart := ""
+		if rpc != "" {
+			rpcPart = " rpc=" + rpc
+		}
+		fmt.Fprintf(dst, "ctx: http: method=%s path=%s status=%d bytes=%d duration=%s auth=%s%s accept=%q origin=%q ua=%q\n",
 			r.Method,
 			r.URL.Path,
 			status,
 			lw.bytes,
 			time.Since(start).Round(time.Millisecond),
 			auth,
+			rpcPart,
 			r.Header.Get("Accept"),
 			r.Header.Get("Origin"),
 			r.UserAgent(),
 		)
 	})
+}
+
+func rpcLogSummary(body []byte) string {
+	var req request
+	if err := json.Unmarshal(body, &req); err != nil || req.Method == "" {
+		return ""
+	}
+	out := req.Method
+	if req.Method == "tools/call" {
+		var call toolCall
+		if err := json.Unmarshal(req.Params, &call); err == nil && call.Name != "" {
+			out += ":" + call.Name
+		}
+	}
+	return strconv.Quote(out)
 }
 
 func (s *Server) Serve(ctx context.Context) error {
