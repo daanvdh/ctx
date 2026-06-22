@@ -10,7 +10,7 @@ func Export(ctx context.Context, args []string) error {
 		return usage("export", "ctx export [session_id]")
 	}
 
-	sessionID, _, err := sessionArg(args, 0)
+	sessionID, err := sessionArg(args, len(args) == 1)
 	if err != nil {
 		return err
 	}

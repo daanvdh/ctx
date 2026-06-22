@@ -9,12 +9,13 @@ func Set(ctx context.Context, args []string) error {
 		return usage("set", "ctx set [session_id] <key> <value>")
 	}
 
-	sessionID, usedArg, err := sessionArg(args, 0)
+	hasSession := len(args) == 3
+	sessionID, err := sessionArg(args, hasSession)
 	if err != nil {
 		return err
 	}
 	offset := 0
-	if usedArg {
+	if hasSession {
 		offset = 1
 	}
 	key, value := args[offset], args[offset+1]

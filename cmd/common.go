@@ -21,13 +21,13 @@ func usage(_ string, text string) error {
 	return fmt.Errorf("usage: %s", text)
 }
 
-func sessionArg(args []string, index int) (string, bool, error) {
-	if len(args) > index {
-		return args[index], true, nil
+func sessionArg(args []string, hasExplicitSession bool) (string, error) {
+	if hasExplicitSession {
+		return args[0], nil
 	}
 	sessionID := os.Getenv("CTX_ID")
 	if sessionID == "" {
-		return "", false, fmt.Errorf("no session ID provided and CTX_ID is not set")
+		return "", fmt.Errorf("no session ID provided and CTX_ID is not set")
 	}
-	return sessionID, false, nil
+	return sessionID, nil
 }

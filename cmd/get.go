@@ -10,12 +10,13 @@ func Get(ctx context.Context, args []string) error {
 		return usage("get", "ctx get [session_id] <key>")
 	}
 
-	sessionID, usedArg, err := sessionArg(args, 0)
+	hasSession := len(args) == 2
+	sessionID, err := sessionArg(args, hasSession)
 	if err != nil {
 		return err
 	}
 	offset := 0
-	if usedArg {
+	if hasSession {
 		offset = 1
 	}
 	key := args[offset]

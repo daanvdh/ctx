@@ -24,12 +24,13 @@ func Render(ctx context.Context, args []string) error {
 		return usage("render", "ctx render [--ignore-missing] [session] <key>")
 	}
 
-	sessionID, usedArg, err := sessionArg(args, 0)
+	hasSession := len(args) == 2
+	sessionID, err := sessionArg(args, hasSession)
 	if err != nil {
 		return err
 	}
 	offset := 0
-	if usedArg {
+	if hasSession {
 		offset = 1
 	}
 	key := args[offset]

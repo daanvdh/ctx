@@ -30,12 +30,13 @@ The first line should define the command to run, e.g.:`)
 	if len(args) != 1 && len(args) != 2 {
 		return usage("execute", "ctx execute [session] <template>")
 	}
-	sessionID, usedArg, err := sessionArg(args, 0)
+	hasSession := len(args) == 2
+	sessionID, err := sessionArg(args, hasSession)
 	if err != nil {
 		return err
 	}
 	offset := 0
-	if usedArg {
+	if hasSession {
 		offset = 1
 	}
 	tmplName := args[offset]

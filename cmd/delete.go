@@ -25,7 +25,7 @@ Delete the specified session, all its child sessions and their variables.`)
 	if len(args) > 1 {
 		return usage("delete", "ctx delete [session_id]")
 	}
-	target, _, err := sessionArg(args, 0)
+	target, err := sessionArg(args, len(args) == 1)
 	if err != nil {
 		return err
 	}
