@@ -8,8 +8,16 @@ import (
 )
 
 type Settings struct {
-	DBPath          string `json:"db_path"`
-	TriggerLocation string `json:"trigger_location"`
+	DBPath               string   `json:"db_path"`
+	TriggerLocation      string   `json:"trigger_location"`
+	MCPHTTPAddr          string   `json:"mcp_http_addr"`
+	MCPHTTPPath          string   `json:"mcp_http_path"`
+	MCPServerName        string   `json:"mcp_server_name"`
+	MCPAllowedOrigins    []string `json:"mcp_allowed_origins"`
+	MCPToken             string   `json:"mcp_token"`
+	MCPOAuthClientID     string   `json:"mcp_oauth_client_id"`
+	MCPOAuthClientSecret string   `json:"mcp_oauth_client_secret"`
+	MCPPublicURL         string   `json:"mcp_public_url"`
 }
 
 func Dir() (string, error) {
@@ -19,7 +27,7 @@ func Dir() (string, error) {
 	}
 
 	cfgDir := filepath.Join(home, ".config", "ctx")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		return "", fmt.Errorf("failed to create config directory %s: %w", cfgDir, err)
 	}
 
@@ -66,6 +74,11 @@ func TriggerDir() (string, error) {
 	return dir, nil
 }
 
+func LoadSettings() (Settings, error) {
+	settings, _, err := loadSettings()
+	return settings, err
+}
+
 func loadSettings() (Settings, string, error) {
 	cfgDir, err := Dir()
 	if err != nil {
@@ -91,7 +104,7 @@ func writeSettings(cfgDir string, settings Settings) error {
 	if err != nil {
 		return fmt.Errorf("failed to encode default settings: %w", err)
 	}
-	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write settings file %s: %w", settingsPath, err)
 	}
 	return nil
