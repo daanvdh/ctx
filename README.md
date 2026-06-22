@@ -56,13 +56,13 @@ All commands exit with status 0 on success; error details are written to **std
 
 ## MCP Server POC
 
-`ctx` also includes a stdio MCP server proof of concept that exposes the ctx API
-as MCP tools for clients such as Claude Desktop or OpenAI-compatible MCP hosts.
+`ctx` includes an MCP server proof of concept that exposes the ctx API as MCP
+tools for clients such as Claude Desktop or OpenAI-compatible MCP hosts.
 
 Build it:
 
 ```bash
-make build-mcp
+make build
 ```
 
 Example client configuration:
@@ -71,7 +71,8 @@ Example client configuration:
 {
   "mcpServers": {
     "ctx": {
-      "command": "/absolute/path/to/ctx/bin/ctx-mcp"
+      "command": "/absolute/path/to/ctx/bin/ctx",
+      "args": ["serve"]
     }
   }
 }
@@ -81,8 +82,8 @@ For clients that require a remote MCP URL, run the same binary in Streamable
 HTTP mode and expose it through HTTPS:
 
 ```bash
-make build-mcp
-./bin/ctx-mcp --http --addr 127.0.0.1:7331 --path /ctx-mcp
+make build
+./bin/ctx serve --http --addr 127.0.0.1:7331 --path /ctx-mcp
 ```
 
 In another terminal, publish the local server with a tunnel:
