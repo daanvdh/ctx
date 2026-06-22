@@ -33,6 +33,17 @@ go install github.com/daanvdh/ctx@latest
   }
   ```
 - Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.json` to use a different directory.
+- HTTP MCP defaults and authentication can also be configured in `settings.json`:
+  ```json
+  {
+    "mcp_http_addr": "127.0.0.1:7331",
+    "mcp_http_path": "/ctx-mcp",
+    "mcp_server_name": "ctx",
+    "mcp_oauth_client_id": "claude",
+    "mcp_oauth_client_secret": "long-random-secret"
+  }
+  ```
+  Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
 
 ## Core Commands
 
@@ -83,13 +94,13 @@ HTTP mode and expose it through HTTPS:
 
 ```bash
 make build
-./bin/ctx serve --http --addr 127.0.0.1:7331 --path /ctx-mcp
+./bin/ctx serve --http
 ```
 
 In another terminal, publish the local server with a tunnel:
 
 ```bash
-tailscale funnel --bg http://127.0.0.1:7331
+tailscale funnel --bg 7331
 ```
 
 Use the HTTPS forwarding URL with `/ctx-mcp` appended as the remote MCP server URL,
@@ -99,8 +110,26 @@ for example:
 https://your-mac.your-tailnet.ts.net/ctx-mcp
 ```
 
-This POC does not implement OAuth, so only run it against trusted clients and do not
-leave an unauthenticated tunnel open.
+If `mcp_oauth_client_id` and `mcp_oauth_client_secret` are configured, HTTP MCP
+requests require authorization. `ctx serve --http` exposes the MCP endpoint and
+the minimal OAuth authorization endpoints in the same HTTP process. Use the
+configured client id and secret in clients such as Claude Desktop. The server
+issues opaque bearer tokens after an authorization-code flow with S256 PKCE and
+then requires `Authorization: Bearer <token>` on MCP requests.
+
+For simple clients that can send bearer tokens directly, set `mcp_token` in
+`settings.json` or `CTX_MCP_TOKEN` in the environment. OAuth credentials can also
+be provided with `CTX_MCP_CLIENT_ID` and `CTX_MCP_CLIENT_SECRET`; environment
+values override settings.
+
+When running behind a tunnel or reverse proxy, `ctx` infers its public URL from
+forwarding headers. If the proxy does not provide them, set `mcp_public_url` to
+the external origin, for example `https://your-mac.your-tailnet.ts.net`.
+
+Publish the whole local HTTP server through the tunnel, not only the MCP path.
+OAuth clients need both `/ctx-mcp` and `/.well-known/...` routes. For Tailscale,
+use `tailscale funnel --bg 7331`, not
+`tailscale funnel --bg http://127.0.0.1:7331/ctx-mcp`.
 
 Available tools:
 
