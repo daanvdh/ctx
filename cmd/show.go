@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-func Export(ctx context.Context, args []string) error {
+func Show(ctx context.Context, args []string) error {
 	if len(args) > 1 {
-		return usage("export", "ctx export [session_id]")
+		return usage("show", "ctx show [session_id]")
 	}
 
 	sessionID, _, err := sessionArg(args, 0)
@@ -19,13 +19,12 @@ func Export(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	lines, err := a.Export(ctx, sessionID)
+	lines, err := a.Show(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 	for _, line := range lines {
 		fmt.Println(line)
 	}
-
 	return nil
 }

@@ -1,6 +1,6 @@
 # ctx — Agent Context Manager
 
-`ctx` is a tiny command‑line tool that provides a hierarchical, key–value store for
+`ctx` is a tiny command-line tool that provides a hierarchical, key-value store for
 agent‑oriented workflows. It lets an orchestrator create *sessions* (a lightweight
 context) and attach arbitrary string data to them. Sub‑agents can inherit the
 data of their ancestors by simply receiving the session identifier.
@@ -32,25 +32,31 @@ go install github.com/daanvdh/ctx@latest
     "db_path": "/tmp/my‑ctx.db"
   }
   ```
+- Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.json` to use a different directory.
 
 ## Core Commands
 
 | Command | Synopsis | Description |
 |---|---|---|
 | `ctx new [options] [custom_id]` | `ctx new`<br>`ctx new <parent-id>`<br>`ctx new my-custom-id`<br>`ctx new my-custom-id --parent <parent-id>`<br>`ctx new --help` | Create a new session. If a custom ID is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent can be set explicitly via `--parent`, or implicitly from the `CTX_ID` environment variable if present. Use `--help` for usage information. |
-| `ctx set <session> <key> <value>` | `ctx set $SID PROJECT_ID "myproj"` | Store *value* under *key* in the specified session (overwrites existing key). |
-| `ctx get <session> <key>` | `ctx get $SID PROJECT_ID` | Retrieve a value, searching up the parent chain. Prints the value to stdout. Fails if the key cannot be found. |
-| `ctx export <session>` | `ctx export $SID` | Emit all visible keys as shell‑compatible assignments (`export KEY='VALUE'`). Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
+| `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store *value* under *key* in the specified session (overwrites existing key). |
+| `ctx get [session] <key>` | `ctx get $SID PROJECT_ID`<br>`CTX_ID=$SID ctx get PROJECT_ID` | Retrieve a value, searching the session, shared contexts, and then ancestors. Prints the value to stdout. Fails if the key cannot be found. |
+| `ctx show [session]` | `ctx show $SID` | Print all visible keys as `KEY = VALUE` lines for human-readable inspection. |
+| `ctx export [session]` | `ctx export $SID` | Emit all visible keys as shell-compatible assignments, including `CTX_ID`. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
+| `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
+| `ctx render [--ignore-missing] [session] <key>` | `ctx render $SID PROMPT` | Render a stored template by substituting `$VAR` placeholders from visible context. |
+| `ctx execute [session] <template>` | `ctx execute $SID review` | Execute a trigger template from the trigger directory. The filename extension is optional. |
 | `ctx tree` | `ctx tree` | Render the complete session hierarchy as an ASCII tree, showing ids and key/value pairs. |
+| `ctx --version` | `ctx --version` | Print the build version. |
 | `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
 
-**Note:** If `CTX_ID` is set in the environment, it will be used as the implicit parent for newly created sessions when no `--parent` flag is provided.
+**Note:** If `CTX_ID` is set in the environment, commands that take a session can omit that argument. `ctx new` uses `CTX_ID` as the implicit parent when no `--parent` flag is provided.
 
 All commands exit with status 0 on success; error details are written to **stderr**.
 
-## Using implicit parent via `CTX_ID`
+## Using `CTX_ID`
 
-The environment variable `CTX_ID` can be used to automatically set the parent of a new session when you do **not** specify `--parent`. This is handy in scripts:
+The environment variable `CTX_ID` can be used as the default session for commands and as the parent of a new session when you do **not** specify `--parent`. This is handy in scripts:
 
 ```bash
 # Create a root session and export its ID.
@@ -59,6 +65,11 @@ export CTX_ID=$ROOT           # make it available to subsequent commands
 
 # Create a child session with a custom name; parent defaults to $CTX_ID.
 CHILD=$(ctx new review-agent)
+
+# Commands can now omit the session argument.
+ctx set PROJECT_ID "gitlab-org/myproject"
+ctx get PROJECT_ID
+ctx show
 ```
 
 If you need to override the implicit parent, use `--parent`:
@@ -92,6 +103,26 @@ echo "$DISCUSSION_ID" # abc123def456
 ctx set $ROOT REPORT_PATH "/tmp/report.txt"
 cat "$(ctx get $CHILD REPORT_PATH)"   # prints the file content from the child’s view
 ```
+
+## Trigger Templates
+
+Manual templates and automatic triggers use files in the trigger directory:
+
+```text
+trigger-session=Issue-1
+key=status
+match=PR_CREATED
+order=0
+command=pi
+---
+Analyse and comment on PR $PR_NUMBER:
+
+$STORY
+```
+
+`command` is required. `trigger-session`, `key`, and `match` are optional matchers and are combined with logical AND. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change=true` to fire on every `ctx` write; it cannot be combined with other matchers.
+
+When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session=<session>` to run the command with a specific existing session instead.
 
 ## `ctx tree` output example
 

@@ -1,44 +1,51 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"ctx/cmd"
 )
 
+var version = "dev"
+
 func main() {
-	// If no command is provided or the user asks for help, display usage information.
-	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
-		cmd.Help(nil)
-		os.Exit(0)
+	commands := map[string]cmd.Command{
+		"new":     {Name: "new", Run: cmd.New},
+		"set":     {Name: "set", Run: cmd.Set},
+		"get":     {Name: "get", Run: cmd.Get},
+		"export":  {Name: "export", Run: cmd.Export},
+		"show":    {Name: "show", Run: cmd.Show},
+		"share":   {Name: "share", Run: cmd.Share},
+		"tree":    {Name: "tree", Run: cmd.Tree},
+		"render":  {Name: "render", Run: cmd.Render},
+		"delete":  {Name: "delete", Run: cmd.Delete},
+		"execute": {Name: "execute", Run: cmd.Execute},
+		"help":    {Name: "help", Run: cmd.Help},
 	}
 
-	command := os.Args[1]
-	args := os.Args[2:]
+	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
+		if err := cmd.Help(context.Background(), nil); err != nil {
+			fmt.Fprintf(os.Stderr, "ctx: help: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if os.Args[1] == "--version" || os.Args[1] == "version" {
+		fmt.Println(version)
+		return
+	}
 
-	var exitCode int
-	switch command {
-	case "new":
-		exitCode = cmd.New(args)
-	case "set":
-		exitCode = cmd.Set(args)
-	case "get":
-		exitCode = cmd.Get(args)
-	case "export":
-		exitCode = cmd.Export(args)
-	case "tree":
-		exitCode = cmd.Tree(args)
-	case "render":
-		exitCode = cmd.Render(args)
-	case "delete":
-        exitCode = cmd.Delete(args)
-	case "execute":
-		exitCode = cmd.Execute(args)
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
+	name := os.Args[1]
+	command, ok := commands[name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "ctx: unknown command: %s\n", name)
 		os.Exit(1)
 	}
 
-	os.Exit(exitCode)
+	if err := command.Run(context.Background(), os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "ctx: %s: %v\n", command.Name, err)
+		os.Exit(1)
+	}
 }

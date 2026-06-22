@@ -1,44 +1,43 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
-
-	"ctx/internal/render"
-	"ctx/internal/store"
+	"strings"
 )
 
-func Tree(args []string) int {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "ctx: tree: unexpected error: %v\n", r)
-			os.Exit(1)
+func Tree(ctx context.Context, args []string) error {
+	format := "text"
+	for i := 0; i < len(args); {
+		switch args[i] {
+		case "--format":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing argument for --format")
+			}
+			format = args[i+1]
+			i += 2
+		case "--json":
+			format = "json"
+			i++
+		case "--help", "-h":
+			fmt.Println(`Usage: ctx tree [--format text|json]
+
+Show the session tree.`)
+			return nil
+		default:
+			return usage("tree", "ctx tree [--format text|json]")
 		}
-	}()
-
-	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "ctx: tree: usage: ctx tree\n")
-		return 1
 	}
 
-	path, err := getCtxPath()
+	a, err := newApp()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: tree: %v\n", err)
-		return 1
+		return err
 	}
-
-	cf, err := store.Load(path)
+	result, err := a.Tree(ctx, strings.ToLower(format))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: tree: %v\n", err)
-		return 1
-	}
-
-	result, err := render.Tree(cf)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: tree: %v\n", err)
-		return 1
+		return err
 	}
 
 	fmt.Print(result)
-	return 0
+	return nil
 }

@@ -44,6 +44,21 @@ func Tree(cf *model.ContextFile) (string, error) {
 	return sb.String(), nil
 }
 
+func TreeNodes(nodes []model.SessionNode) (string, error) {
+	if len(nodes) == 0 {
+		return "", nil
+	}
+
+	cf := &model.ContextFile{Sessions: make(map[string]*model.Session, len(nodes))}
+	for _, node := range nodes {
+		cf.Sessions[node.ID] = &model.Session{
+			Parent: node.Parent,
+			Data:   node.Data,
+		}
+	}
+	return Tree(cf)
+}
+
 func writeNode(sb *strings.Builder, cf *model.ContextFile, id string, children map[string][]string, prefix string, isRoot, isLastInParent bool) {
 	s := cf.Sessions[id]
 

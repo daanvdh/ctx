@@ -1,46 +1,34 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
-
-	"ctx/internal/session"
-	"ctx/internal/store"
 )
 
-func Get(args []string) int {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "ctx: get: unexpected error: %v\n", r)
-			os.Exit(1)
-		}
-	}()
-
-	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "ctx: get: usage: ctx get <session_id> <key>\n")
-		return 1
+func Get(ctx context.Context, args []string) error {
+	if len(args) != 1 && len(args) != 2 {
+		return usage("get", "ctx get [session_id] <key>")
 	}
 
-	sessionID, key := args[0], args[1]
-
-	path, err := getCtxPath()
+	sessionID, usedArg, err := sessionArg(args, 0)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: get: %v\n", err)
-		return 1
+		return err
 	}
-
-	cf, err := store.Load(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: get: %v\n", err)
-		return 1
+	offset := 0
+	if usedArg {
+		offset = 1
 	}
+	key := args[offset]
 
-	value, err := session.Get(cf, sessionID, key)
+	a, err := newApp()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: get: %v\n", err)
-		return 1
+		return err
+	}
+	value, err := a.GetValue(ctx, sessionID, key)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println(value)
-	return 0
+	return nil
 }

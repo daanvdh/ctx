@@ -9,14 +9,57 @@ import (
 	"ctx/internal/model"
 )
 
-func GenID() string {
+func GenID() (string, error) {
 	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate session ID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func ValidID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func ValidShellKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		if i == 0 {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' {
+				continue
+			}
+			return false
+		}
+		if (r >= 'A' && r <= 'Z') ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func New(cf *model.ContextFile, parentID *string) (string, error) {
-	id := GenID()
+	id, err := GenID()
+	if err != nil {
+		return "", err
+	}
 
 	if parentID != nil {
 		if _, ok := cf.Sessions[*parentID]; !ok {
@@ -46,6 +89,13 @@ func Set(cf *model.ContextFile, sessionID, key, value string) error {
 }
 
 func Get(cf *model.ContextFile, sessionID, key string) (string, error) {
+	if cf == nil || cf.Sessions == nil {
+		return "", fmt.Errorf("session %s not found", sessionID)
+	}
+	if _, ok := cf.Sessions[sessionID]; !ok {
+		return "", fmt.Errorf("session %s not found", sessionID)
+	}
+
 	visited := make(map[string]bool)
 	currentID := sessionID
 	hops := 0
@@ -72,6 +122,13 @@ func Get(cf *model.ContextFile, sessionID, key string) (string, error) {
 }
 
 func Resolve(cf *model.ContextFile, sessionID string) (map[string]string, error) {
+	if cf == nil || cf.Sessions == nil {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+	if _, ok := cf.Sessions[sessionID]; !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
 	visited := make(map[string]bool)
 	result := make(map[string]string)
 	currentID := sessionID
