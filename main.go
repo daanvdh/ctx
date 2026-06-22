@@ -22,6 +22,7 @@ func main() {
 		"render":  {Name: "render", Run: cmd.Render},
 		"delete":  {Name: "delete", Run: cmd.Delete},
 		"execute": {Name: "execute", Run: cmd.Execute},
+		"serve":   {Name: "serve", Run: cmd.Serve},
 		"help":    {Name: "help", Run: cmd.Help},
 	}
 
