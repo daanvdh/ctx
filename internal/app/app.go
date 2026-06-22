@@ -114,6 +114,10 @@ func (a *App) ShareContext(ctx context.Context, fromSessionID, toSessionID strin
 	return a.store.ShareContext(ctx, fromSessionID, toSessionID)
 }
 
+func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string, error) {
+	return a.store.Resolve(ctx, sessionID)
+}
+
 func (a *App) Export(ctx context.Context, sessionID string) ([]string, error) {
 	resolved, err := a.store.Resolve(ctx, sessionID)
 	if err != nil {
