@@ -91,6 +91,8 @@ func TestServerInitializeAndToolCalls(t *testing.T) {
 }
 
 func TestServerReturnsToolErrorForMissingArgument(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	var input bytes.Buffer
 	writeTestMessage(t, &input, map[string]any{
 		"jsonrpc": "2.0",
