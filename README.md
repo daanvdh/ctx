@@ -54,6 +54,72 @@ go install github.com/daanvdh/ctx@latest
 
 All commands exit with status 0 on success; error details are written to **stderr**.
 
+## MCP Server POC
+
+`ctx` also includes a stdio MCP server proof of concept that exposes the ctx API
+as MCP tools for clients such as Claude Desktop or OpenAI-compatible MCP hosts.
+
+Build it:
+
+```bash
+make build-mcp
+```
+
+Example client configuration:
+
+```json
+{
+  "mcpServers": {
+    "ctx": {
+      "command": "/absolute/path/to/ctx/bin/ctx-mcp"
+    }
+  }
+}
+```
+
+For clients that require a remote MCP URL, run the same binary in Streamable
+HTTP mode and expose it through HTTPS:
+
+```bash
+make build-mcp
+./bin/ctx-mcp --http --addr 127.0.0.1:7331 --path /ctx-mcp
+```
+
+In another terminal, publish the local server with a tunnel:
+
+```bash
+tailscale funnel --bg http://127.0.0.1:7331
+```
+
+Use the HTTPS forwarding URL with `/ctx-mcp` appended as the remote MCP server URL,
+for example:
+
+```text
+https://your-mac.your-tailnet.ts.net/ctx-mcp
+```
+
+This POC does not implement OAuth, so only run it against trusted clients and do not
+leave an unauthenticated tunnel open.
+
+Available tools:
+
+| Tool | Description |
+|---|---|
+| `ctx_new` | Create a session, optionally with a custom id and parent. |
+| `ctx_set` | Store a string key/value in a session. |
+| `ctx_get` | Get a visible value from a session, shared context, or ancestor. |
+| `ctx_resolve` | Return all visible key/value pairs as structured data. |
+| `ctx_show` | Return visible key/value pairs as `KEY = VALUE` lines. |
+| `ctx_export` | Return shell `export` lines, including `CTX_ID`. |
+| `ctx_share` | Share one session's context into another session. |
+| `ctx_tree` | Render the complete session tree as text or JSON. |
+| `ctx_render` | Render a stored template key with visible context variables. |
+| `ctx_delete` | Delete a session and all descendants. |
+| `ctx_execute` | Execute a trigger template from the ctx trigger directory. |
+
+The server uses the same settings and SQLite database as the CLI, so `db_path`
+and `trigger_location` in `$HOME/.config/ctx/settings.json` apply to both.
+
 ## Using `CTX_ID`
 
 The environment variable `CTX_ID` can be used as the default session for commands and as the parent of a new session when you do **not** specify `--parent`. This is handy in scripts:
