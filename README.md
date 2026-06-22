@@ -100,7 +100,7 @@ make build
 In another terminal, publish the local server with a tunnel:
 
 ```bash
-tailscale funnel --bg http://127.0.0.1:7331
+tailscale funnel --bg 7331
 ```
 
 Use the HTTPS forwarding URL with `/ctx-mcp` appended as the remote MCP server URL,
@@ -125,6 +125,11 @@ values override settings.
 When running behind a tunnel or reverse proxy, `ctx` infers its public URL from
 forwarding headers. If the proxy does not provide them, set `mcp_public_url` to
 the external origin, for example `https://your-mac.your-tailnet.ts.net`.
+
+Publish the whole local HTTP server through the tunnel, not only the MCP path.
+OAuth clients need both `/ctx-mcp` and `/.well-known/...` routes. For Tailscale,
+use `tailscale funnel --bg 7331`, not
+`tailscale funnel --bg http://127.0.0.1:7331/ctx-mcp`.
 
 Available tools:
 

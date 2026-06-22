@@ -44,6 +44,9 @@ func Serve(ctx context.Context, args []string) error {
 			Auth:           auth,
 		}))
 		fmt.Fprintf(os.Stderr, "ctx: serve: listening on http://%s%s\n", opts.addr, opts.path)
+		if auth.Enabled() {
+			fmt.Fprintf(os.Stderr, "ctx: serve: auth enabled; publish http://%s, not only http://%s%s, so OAuth discovery routes are reachable\n", opts.addr, opts.addr, opts.path)
+		}
 		return http.ListenAndServe(opts.addr, mux)
 	}
 
