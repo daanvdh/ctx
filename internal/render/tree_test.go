@@ -28,10 +28,10 @@ func TestTreeSingleRoot(t *testing.T) {
 	if !strings.Contains(output, "abc123") {
 		t.Errorf("output should contain session ID abc123, got: %s", output)
 	}
-	if !strings.Contains(output, "PROJECT_ID=gitlab-org/myproject") {
+	if !strings.Contains(output, "PROJECT_ID [string] gitlab-org/myproject") {
 		t.Errorf("output should contain PROJECT_ID, got: %s", output)
 	}
-	if !strings.Contains(output, "MR_IID=412") {
+	if !strings.Contains(output, "MR_IID [string] 412") {
 		t.Errorf("output should contain MR_IID, got: %s", output)
 	}
 }
@@ -67,7 +67,7 @@ func TestTreeRootWithOneChild(t *testing.T) {
 	if !strings.Contains(output, "└── def456") {
 		t.Errorf("output should contain └── connector for single child, got: %s", output)
 	}
-	if !strings.Contains(output, "DISCUSSION_ID=abc123def456") {
+	if !strings.Contains(output, "DISCUSSION_ID [string] abc123def456") {
 		t.Errorf("output should contain child data, got: %s", output)
 	}
 }
@@ -108,10 +108,10 @@ func TestTreeRootWithTwoChildren(t *testing.T) {
 	if !strings.Contains(output, "└── ghi789") {
 		t.Errorf("output should contain └── connector for last child, got: %s", output)
 	}
-	if !strings.Contains(output, "DISCUSSION_ID=abc123def456") {
+	if !strings.Contains(output, "DISCUSSION_ID [string] abc123def456") {
 		t.Errorf("output should contain first child data, got: %s", output)
 	}
-	if !strings.Contains(output, "DISCUSSION_ID=xyz789abc012") {
+	if !strings.Contains(output, "DISCUSSION_ID [string] xyz789abc012") {
 		t.Errorf("output should contain last child data, got: %s", output)
 	}
 }
@@ -157,7 +157,7 @@ func TestTreeMultiLevel(t *testing.T) {
 	if !strings.Contains(output, "jkl012") {
 		t.Errorf("output should contain grandchild jkl012, got: %s", output)
 	}
-	if !strings.Contains(output, "CHUNK_ID=zzz") {
+	if !strings.Contains(output, "CHUNK_ID [string] zzz") {
 		t.Errorf("output should contain grandchild data, got: %s", output)
 	}
 }

@@ -90,6 +90,71 @@ func TestServerInitializeAndToolCalls(t *testing.T) {
 	}
 }
 
+func TestServerDocValuePreviewAndShowShape(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var input bytes.Buffer
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "ctx_new",
+			"arguments": map[string]any{"id": "root"},
+		},
+	})
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "ctx_set",
+			"arguments": map[string]any{
+				"session_id": "root",
+				"key":        "DOC",
+				"value":      "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n",
+				"is_doc":     true,
+			},
+		},
+	})
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "ctx_get",
+			"arguments": map[string]any{
+				"session_id": "root",
+				"key":        "DOC",
+				"preview":    true,
+			},
+		},
+	})
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      4,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "ctx_show",
+			"arguments": map[string]any{"session_id": "root"},
+		},
+	})
+
+	var output bytes.Buffer
+	if err := NewServer(&input, &output).Serve(context.Background()); err != nil {
+		t.Fatalf("Serve error: %v", err)
+	}
+
+	responses := readTestResponses(t, output.Bytes())
+	if text := toolText(t, responses[2]); strings.Contains(text, "11") || !strings.Contains(text, "10") {
+		t.Fatalf("preview response = %s, want first 10 lines only", text)
+	}
+	show := toolText(t, responses[3])
+	if !strings.Contains(show, `"value_type": "doc"`) || !strings.Contains(show, `"size_bytes"`) || strings.Contains(show, `"value": "1\\n2`) {
+		t.Fatalf("ctx_show response = %s, want structured doc preview", show)
+	}
+}
+
 func TestServerReturnsToolErrorForMissingArgument(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

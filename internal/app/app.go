@@ -21,13 +21,17 @@ import (
 const (
 	TreeFormatText = "text"
 	TreeFormatJSON = "json"
+	MaxDocBytes    = 500 * 1024
 )
 
 type Store interface {
 	CreateSession(ctx context.Context, id string, parentID *string) error
 	SetValue(ctx context.Context, sessionID, key, value string) error
+	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
 	GetValue(ctx context.Context, sessionID, key string) (string, error)
+	GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error)
 	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
+	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
 	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
 	DeleteSessionTree(ctx context.Context, sessionID string) error
@@ -88,8 +92,16 @@ func (a *App) CreateSession(ctx context.Context, customID string, explicitParent
 }
 
 func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error {
+	return a.SetEntry(ctx, sessionID, key, model.NewEntry(value, model.ValueTypeString))
+}
+
+func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
+	entry = model.NewEntry(entry.Value, entry.ValueType)
+	if err := validateEntry(entry); err != nil {
+		return err
+	}
 	oldValue, oldErr := a.store.GetValue(ctx, sessionID, key)
-	if err := a.store.SetValue(ctx, sessionID, key, value); err != nil {
+	if err := a.store.SetEntry(ctx, sessionID, key, entry); err != nil {
 		return err
 	}
 	if os.Getenv("CTX_SUPPRESS_TRIGGERS") == "1" {
@@ -102,12 +114,58 @@ func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error 
 		SessionID: sessionID,
 		Key:       key,
 		OldValue:  oldValue,
-		NewValue:  value,
+		NewValue:  entry.Value,
 	})
 }
 
 func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, error) {
-	return a.store.GetValue(ctx, sessionID, key)
+	entry, err := a.store.GetEntry(ctx, sessionID, key)
+	if err != nil {
+		return "", err
+	}
+	return resolveEntryContent(key, entry, "get")
+}
+
+func (a *App) GetPath(ctx context.Context, sessionID, key string) (string, error) {
+	entry, err := a.store.GetEntry(ctx, sessionID, key)
+	if err != nil {
+		return "", err
+	}
+	switch entry.ValueType {
+	case model.ValueTypeString:
+		return entry.Value, nil
+	case model.ValueTypeDoc:
+		file, err := os.CreateTemp("", "ctx-*")
+		if err != nil {
+			return "", fmt.Errorf("write temp doc: %w", err)
+		}
+		if _, err := file.WriteString(entry.Value); err != nil {
+			_ = file.Close()
+			return "", fmt.Errorf("write temp doc: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return "", fmt.Errorf("write temp doc: %w", err)
+		}
+		return file.Name(), nil
+	case model.ValueTypeFileRef:
+		if _, err := os.Stat(entry.Value); err != nil {
+			if os.IsNotExist(err) {
+				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --file-ref <new-path>", entry.Value, key)
+			}
+			return "", fmt.Errorf("stat file_ref path %s: %w", entry.Value, err)
+		}
+		return entry.Value, nil
+	default:
+		return "", fmt.Errorf("%s value type is not implemented", entry.ValueType)
+	}
+}
+
+func (a *App) GetPreview(ctx context.Context, sessionID, key string) (string, error) {
+	value, err := a.GetValue(ctx, sessionID, key)
+	if err != nil {
+		return "", err
+	}
+	return firstLines(value, 10), nil
 }
 
 func (a *App) ShareContext(ctx context.Context, fromSessionID, toSessionID string) error {
@@ -115,37 +173,84 @@ func (a *App) ShareContext(ctx context.Context, fromSessionID, toSessionID strin
 }
 
 func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string, error) {
-	return a.store.Resolve(ctx, sessionID)
+	entries, err := a.store.ResolveEntries(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return resolveEntries(entries, "resolve")
 }
 
-func (a *App) Export(ctx context.Context, sessionID string) ([]string, error) {
-	resolved, err := a.store.Resolve(ctx, sessionID)
+func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths bool) ([]string, error) {
+	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	lines := make([]string, 0, len(resolved)+1)
+	lines := make([]string, 0, len(entries)+1)
 	lines = append(lines, fmt.Sprintf("export CTX_ID=%s", shellSingleQuote(sessionID)))
-	for _, key := range sortedKeys(resolved) {
+	for _, key := range sortedEntryKeys(entries) {
 		if !session.ValidShellKey(key) {
 			return nil, fmt.Errorf("key %s is not a valid shell variable name", key)
 		}
-		lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(resolved[key])))
+		entry := entries[key]
+		switch entry.ValueType {
+		case model.ValueTypeString:
+			lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(entry.Value)))
+		case model.ValueTypeDoc:
+			if includeDocs {
+				lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(entry.Value)))
+			}
+		case model.ValueTypeFileRef:
+			if filesAsPaths {
+				lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(entry.Value)))
+			}
+		case model.ValueTypeFileBin:
+		default:
+			return nil, fmt.Errorf("unsupported value type %q for key %s", entry.ValueType, key)
+		}
 	}
 	return lines, nil
 }
 
 func (a *App) Show(ctx context.Context, sessionID string) ([]string, error) {
-	resolved, err := a.store.Resolve(ctx, sessionID)
+	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	lines := make([]string, 0, len(resolved))
-	for _, key := range sortedKeys(resolved) {
-		lines = append(lines, fmt.Sprintf("%s = %s", key, resolved[key]))
+	lines := make([]string, 0, len(entries))
+	for _, key := range sortedEntryKeys(entries) {
+		lines = append(lines, formatEntryLine(key, entries[key]))
 	}
 	return lines, nil
+}
+
+func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]any, error) {
+	entries, err := a.store.ResolveEntries(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, key := range sortedEntryKeys(entries) {
+		entry := entries[key]
+		item := map[string]any{
+			"key":        key,
+			"value_type": string(entry.ValueType),
+		}
+		switch entry.ValueType {
+		case model.ValueTypeString:
+			item["value"] = entry.Value
+		case model.ValueTypeDoc:
+			item["size_bytes"] = len([]byte(entry.Value))
+			item["preview"] = preview(entry.Value, 60)
+		case model.ValueTypeFileRef:
+			item["path"] = entry.Value
+			_, err := os.Stat(entry.Value)
+			item["path_exists"] = err == nil
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 func (a *App) Tree(ctx context.Context, format string) (string, error) {
@@ -168,11 +273,19 @@ func (a *App) Tree(ctx context.Context, format string) (string, error) {
 }
 
 func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
-	template, err := a.store.GetValue(ctx, sessionID, key)
+	templateEntry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
 	}
-	resolved, err := a.store.Resolve(ctx, sessionID)
+	template, err := resolveEntryContent(key, templateEntry, "render")
+	if err != nil {
+		return "", err
+	}
+	entries, err := a.store.ResolveEntries(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := resolveEntries(entries, "render")
 	if err != nil {
 		return "", err
 	}
@@ -261,6 +374,120 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func sortedEntryKeys(m map[string]model.Entry) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func validateEntry(entry model.Entry) error {
+	switch entry.ValueType {
+	case model.ValueTypeString:
+		return nil
+	case model.ValueTypeDoc:
+		if len([]byte(entry.Value)) > MaxDocBytes {
+			return fmt.Errorf("doc content exceeds 500KB. Consider splitting into multiple keys or referencing a file with --file-ref")
+		}
+		return nil
+	case model.ValueTypeFileRef:
+		if _, err := os.Stat(entry.Value); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("file not found at path: %s", entry.Value)
+			}
+			return fmt.Errorf("stat file_ref path %s: %w", entry.Value, err)
+		}
+		return nil
+	case model.ValueTypeFileBin:
+		return fmt.Errorf("file_bin value type is not implemented")
+	default:
+		return fmt.Errorf("unsupported value type %q", entry.ValueType)
+	}
+}
+
+func resolveEntries(entries map[string]model.Entry, op string) (map[string]string, error) {
+	resolved := make(map[string]string, len(entries))
+	for key, entry := range entries {
+		value, err := resolveEntryContent(key, entry, op)
+		if err != nil {
+			return nil, err
+		}
+		resolved[key] = value
+	}
+	return resolved, nil
+}
+
+func resolveEntryContent(key string, entry model.Entry, op string) (string, error) {
+	switch entry.ValueType {
+	case model.ValueTypeString, model.ValueTypeDoc:
+		return entry.Value, nil
+	case model.ValueTypeFileRef:
+		data, err := os.ReadFile(entry.Value)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if op == "render" {
+					return "", fmt.Errorf("cannot render template - file_ref key '%s' path not found: %s", key, entry.Value)
+				}
+				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --file-ref <new-path>", entry.Value, key)
+			}
+			return "", fmt.Errorf("read file_ref path %s: %w", entry.Value, err)
+		}
+		return string(data), nil
+	case model.ValueTypeFileBin:
+		return "", fmt.Errorf("file_bin value type is not implemented")
+	default:
+		return "", fmt.Errorf("unsupported value type %q for key %s", entry.ValueType, key)
+	}
+}
+
+func firstLines(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	lines := strings.SplitAfter(value, "\n")
+	if len(lines) <= limit {
+		return value
+	}
+	return strings.Join(lines[:limit], "")
+}
+
+func formatEntryLine(key string, entry model.Entry) string {
+	switch entry.ValueType {
+	case model.ValueTypeDoc:
+		return fmt.Sprintf("%s [doc] %s %q", key, humanKB(len([]byte(entry.Value))), preview(entry.Value, 60))
+	case model.ValueTypeFileRef:
+		if _, err := os.Stat(entry.Value); err != nil && os.IsNotExist(err) {
+			return fmt.Sprintf("%s [file_ref] %s", key, "\u26a0 path not found")
+		}
+		return fmt.Sprintf("%s [file_ref] %s", key, entry.Value)
+	case model.ValueTypeString:
+		return fmt.Sprintf("%s [string] %s", key, entry.Value)
+	default:
+		return fmt.Sprintf("%s [%s] not implemented", key, entry.ValueType)
+	}
+}
+
+func preview(value string, max int) string {
+	value = strings.ReplaceAll(value, "\n", "\\n")
+	if len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
+}
+
+func humanKB(size int) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+	kb := float64(size) / 1024.0
+	return fmt.Sprintf("%.1f KB", kb)
 }
 
 func shellSingleQuote(v string) string {

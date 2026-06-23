@@ -6,12 +6,28 @@ import (
 )
 
 func Get(ctx context.Context, args []string) error {
-	if len(args) != 1 && len(args) != 2 {
-		return usage("get", "ctx get [session_id] <key>")
+	asPath := false
+	preview := false
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		switch arg {
+		case "--path":
+			asPath = true
+		case "--preview":
+			preview = true
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	if asPath && preview {
+		return fmt.Errorf("--path and --preview are mutually exclusive")
+	}
+	if len(filtered) != 1 && len(filtered) != 2 {
+		return usage("get", "ctx get [session_id] <key> [--path|--preview]")
 	}
 
-	hasSession := len(args) == 2
-	sessionID, err := sessionArg(args, hasSession)
+	hasSession := len(filtered) == 2
+	sessionID, err := sessionArg(filtered, hasSession)
 	if err != nil {
 		return err
 	}
@@ -19,13 +35,20 @@ func Get(ctx context.Context, args []string) error {
 	if hasSession {
 		offset = 1
 	}
-	key := args[offset]
+	key := filtered[offset]
 
 	a, err := newApp()
 	if err != nil {
 		return err
 	}
-	value, err := a.GetValue(ctx, sessionID, key)
+	var value string
+	if asPath {
+		value, err = a.GetPath(ctx, sessionID, key)
+	} else if preview {
+		value, err = a.GetPreview(ctx, sessionID, key)
+	} else {
+		value, err = a.GetValue(ctx, sessionID, key)
+	}
 	if err != nil {
 		return err
 	}

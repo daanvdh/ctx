@@ -6,14 +6,16 @@ func tools() []map[string]any {
 			"id":     stringSchema("Optional custom session id."),
 			"parent": stringSchema("Optional parent session id."),
 		}, []string{}),
-		tool("ctx_set", "Store a string value in a session.", map[string]any{
+		tool("ctx_set", "Set a value in a ctx session. Use is_doc for long-form content; docs are excluded from ctx_export by default and shown as previews in ctx_show.", map[string]any{
 			"session_id": stringSchema("Session id."),
 			"key":        stringSchema("Context key."),
-			"value":      stringSchema("Context value."),
+			"value":      stringSchema("Context value. For long-form text, set is_doc to true."),
+			"is_doc":     boolSchema("Mark this value as a long-form document."),
 		}, []string{"session_id", "key", "value"}),
-		tool("ctx_get", "Get a visible value from a session, checking the session, shared contexts, and ancestors.", map[string]any{
+		tool("ctx_get", "Get a visible value from a session. Doc values return full content; file_ref values return referenced file content.", map[string]any{
 			"session_id": stringSchema("Session id."),
 			"key":        stringSchema("Context key."),
+			"preview":    boolSchema("Return only the first 10 lines."),
 		}, []string{"session_id", "key"}),
 		tool("ctx_resolve", "Return all visible key/value pairs for a session as structured data.", map[string]any{
 			"session_id": stringSchema("Session id."),
