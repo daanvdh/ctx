@@ -53,7 +53,7 @@ go install github.com/daanvdh/ctx@latest
 | `ctx new [options] [custom_id]` | `ctx new`<br>`ctx new <parent-id>`<br>`ctx new my-custom-id`<br>`ctx new my-custom-id --parent <parent-id>`<br>`ctx new --help` | Create a new session. If a custom ID is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent can be set explicitly via `--parent`, or implicitly from the `CTX_ID` environment variable if present. Use `--help` for usage information. |
 | `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store a scalar string under *key* in the specified session (overwrites existing key). |
 | `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx show` and `ctx tree`. |
-| `ctx set [session] <key> --file-ref <path>` | `ctx set $SID API_SPEC --file-ref ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
+| `ctx set [session] <key> --ref <path>` | `ctx set $SID API_SPEC --ref ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
 | `ctx get [session] <key> [--path\|--preview]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --preview`<br>`ctx get $SID STORY --path` | Retrieve a visible value, searching the session, shared contexts, and then ancestors. For `file_ref`, default output is the referenced file content. `--preview` prints the first 10 lines. `--path` returns the stored path for `file_ref`, writes a `doc` to a temp file and returns that path, and returns the value for strings. |
 | `ctx show [session]` | `ctx show $SID` | Print all visible keys with type tags. Documents and file references are shown as previews or paths, not full content. |
 | `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
@@ -76,7 +76,7 @@ Every ctx entry has a value type:
 |---|---|---|---|
 | `string` | `ctx set KEY value` | Stored value | Included by default |
 | `doc` | `ctx set KEY --doc "..."` or `ctx set KEY --doc < file.md` | Full document content | Omitted by default; include with `--include-docs` |
-| `file_ref` | `ctx set KEY --file-ref ./path` | Current file content | Omitted by default; include path with `--files-as-paths` |
+| `file_ref` | `ctx set KEY --ref ./path` | Current file content | Omitted by default; include path with `--files-as-paths` |
 | `file_bin` | Reserved | Not implemented | Not exported |
 
 `ctx render` resolves all implemented types to content before template
@@ -84,7 +84,7 @@ substitution, so consumers can use `$KEY` without knowing whether it came from a
 string, document, or file reference. If a referenced file no longer exists,
 `ctx get` and `ctx render` fail with a clear error.
 
-Documents are limited to 500KB. Use `--file-ref` for larger local files or for
+Documents are limited to 500KB. Use `--ref` for larger local files or for
 content that should be read fresh each time.
 
 ## MCP Server POC
@@ -218,7 +218,7 @@ echo "$MR_IID"       # 412
 echo "$DISCUSSION_ID" # abc123def456
 
 # Bonus: reference files through context.
-ctx set $ROOT REPORT --file-ref /tmp/report.txt
+ctx set $ROOT REPORT --ref /tmp/report.txt
 ctx get $CHILD REPORT                  # prints the file content from the child's view
 ctx get $CHILD REPORT --path           # prints /tmp/report.txt
 ```
