@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"ctx/internal/textutil"
 	"ctx/internal/model"
+	"ctx/internal/textutil"
 )
 
 const (

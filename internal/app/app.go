@@ -12,11 +12,11 @@ import (
 	"strings"
 
 	"ctx/internal/config"
-	"ctx/internal/textutil"
 	"ctx/internal/model"
 	"ctx/internal/render"
 	"ctx/internal/session"
 	"ctx/internal/store"
+	"ctx/internal/textutil"
 )
 
 const (

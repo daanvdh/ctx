@@ -12,7 +12,7 @@ concurrent access, has atomic writes and does not require any external service.
 ## Quick Install
 
 ```bash
-# Prerequisite: Go 1.21+ (the build requires Go 1.25)
+# Prerequisite: Go 1.21+
 git clone https://github.com/daanvdh/ctx.git
 cd ctx
 make build               # compiles the binary to ./bin/ctx
