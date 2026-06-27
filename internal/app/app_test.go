@@ -263,6 +263,26 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowFormatsFileRefAsPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "spec.yaml")
+	if err := os.WriteFile(path, []byte("openapi: 3.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "SPEC [path] " + path
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %v, want %q", lines, want)
+	}
+}
+
 func TestRenderUsesInjectedStore(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE"},

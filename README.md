@@ -252,7 +252,7 @@ When a trigger fires, ctx renders the prompt from the triggering session, create
 ├── 8e7d3a4f
 │     DISCUSSION_ID [string] abc123def456
 └── a1b2c3d4
-      REPORT [file_ref] /tmp/report.txt
+      REPORT [path] /tmp/report.txt
       STORY [doc] 1.4 KB "# Story\nAs a user..."
 ```
 

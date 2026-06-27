@@ -1,6 +1,8 @@
 package render
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -183,6 +185,32 @@ func TestTreeNilSessions(t *testing.T) {
 	}
 	if output != "" {
 		t.Errorf("expected empty output for nil sessions, got: %s", output)
+	}
+}
+
+func TestTreeFormatsFileRefAsPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "spec.yaml")
+	if err := os.WriteFile(path, []byte("openapi: 3.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cf := &model.ContextFile{
+		Sessions: map[string]*model.Session{
+			"root": {
+				Data: map[string]string{"SPEC": path},
+				Entries: map[string]model.Entry{
+					"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+				},
+			},
+		},
+	}
+
+	output, err := Tree(cf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(output, "SPEC [path] "+path) {
+		t.Fatalf("output = %s, want [path] label", output)
 	}
 }
 

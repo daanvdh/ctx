@@ -501,9 +501,9 @@ func formatEntryLine(key string, entry model.Entry) string {
 		return fmt.Sprintf("%s [doc] %s %q", key, humanKB(len([]byte(entry.Value))), preview(entry.Value, 60))
 	case model.ValueTypeFileRef:
 		if _, err := os.Stat(entry.Value); err != nil && os.IsNotExist(err) {
-			return fmt.Sprintf("%s [file_ref] %s", key, "\u26a0 path not found")
+			return fmt.Sprintf("%s [path] %s", key, "\u26a0 path not found")
 		}
-		return fmt.Sprintf("%s [file_ref] %s", key, entry.Value)
+		return fmt.Sprintf("%s [path] %s", key, entry.Value)
 	case model.ValueTypeString:
 		return fmt.Sprintf("%s [string] %s", key, entry.Value)
 	default:
