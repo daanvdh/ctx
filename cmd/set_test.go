@@ -6,8 +6,8 @@ import (
 	"ctx/internal/model"
 )
 
-func TestParseSetArgsRef(t *testing.T) {
-	got, err := parseSetArgs([]string{"s1", "SPEC", "--ref", "./openapi.yaml"})
+func TestParseSetArgsPath(t *testing.T) {
+	got, err := parseSetArgs([]string{"s1", "SPEC", "--path", "./openapi.yaml"})
 	if err != nil {
 		t.Fatalf("parseSetArgs error: %v", err)
 	}

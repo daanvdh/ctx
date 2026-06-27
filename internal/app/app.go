@@ -150,7 +150,7 @@ func (a *App) GetPath(ctx context.Context, sessionID, key string) (string, error
 	case model.ValueTypeFileRef:
 		if _, err := os.Stat(entry.Value); err != nil {
 			if os.IsNotExist(err) {
-				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --ref <new-path>", entry.Value, key)
+				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --path <new-path>", entry.Value, key)
 			}
 			return "", fmt.Errorf("stat file_ref path %s: %w", entry.Value, err)
 		}
@@ -391,7 +391,7 @@ func validateEntry(entry model.Entry) error {
 		return nil
 	case model.ValueTypeDoc:
 		if len([]byte(entry.Value)) > MaxDocBytes {
-			return fmt.Errorf("doc content exceeds 500KB. Consider splitting into multiple keys or referencing a file with --ref")
+			return fmt.Errorf("doc content exceeds 500KB. Consider splitting into multiple keys or referencing a file with --path")
 		}
 		return nil
 	case model.ValueTypeFileRef:
@@ -432,7 +432,7 @@ func resolveEntryContent(key string, entry model.Entry, op string) (string, erro
 				if op == "render" {
 					return "", fmt.Errorf("cannot render template - file_ref key '%s' path not found: %s", key, entry.Value)
 				}
-				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --ref <new-path>", entry.Value, key)
+				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --path <new-path>", entry.Value, key)
 			}
 			return "", fmt.Errorf("read file_ref path %s: %w", entry.Value, err)
 		}

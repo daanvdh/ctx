@@ -34,13 +34,13 @@ type setArgs struct {
 
 func parseSetArgs(args []string) (setArgs, error) {
 	if len(args) < 2 {
-		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--doc [text]|--ref <path>")
+		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--doc [text]|--path <path>")
 	}
 	flagIndex := -1
 	for i, arg := range args {
-		if arg == "--doc" || arg == "--ref" {
+		if arg == "--doc" || arg == "--path" {
 			if flagIndex != -1 {
-				return setArgs{}, fmt.Errorf("--doc and --ref are mutually exclusive")
+				return setArgs{}, fmt.Errorf("--doc and --path are mutually exclusive")
 			}
 			flagIndex = i
 		}
@@ -62,7 +62,7 @@ func parseSetArgs(args []string) (setArgs, error) {
 	}
 
 	if flagIndex != 1 && flagIndex != 2 {
-		return setArgs{}, usage("set", "ctx set [session_id] <key> --doc [text] | ctx set [session_id] <key> --ref <path>")
+		return setArgs{}, usage("set", "ctx set [session_id] <key> --doc [text] | ctx set [session_id] <key> --path <path>")
 	}
 	hasSession := flagIndex == 2
 	sessionID, err := sessionArg(args, hasSession)
@@ -93,12 +93,12 @@ func parseSetArgs(args []string) (setArgs, error) {
 			value = string(data)
 		}
 		return setArgs{sessionID: sessionID, key: key, value: value, valueType: model.ValueTypeDoc}, nil
-	case "--ref":
+	case "--path":
 		if len(values) != 1 {
-			return setArgs{}, fmt.Errorf("--ref requires exactly one path")
+			return setArgs{}, fmt.Errorf("--path requires exactly one path")
 		}
 		return setArgs{sessionID: sessionID, key: key, value: values[0], valueType: model.ValueTypeFileRef}, nil
 	default:
-		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--doc [text]|--ref <path>")
+		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--doc [text]|--path <path>")
 	}
 }
