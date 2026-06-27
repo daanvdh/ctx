@@ -44,8 +44,8 @@ func TestMigrationRecordsSchemaVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("schema version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("schema version = %d, want 3", version)
 	}
 }
 
@@ -133,6 +133,34 @@ func TestSetValueCreatesAndUpdatesKey(t *testing.T) {
 	}
 	if got := cf.Sessions["s1"].Data["KEY"]; got != "second" {
 		t.Fatalf("KEY = %q, want second", got)
+	}
+}
+
+func TestSetEntryStoresValueType(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_set_entry.db")
+
+	if err := CreateSession(dsn, "s1", nil); err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	if err := SetEntry(dsn, "s1", "DOC", model.NewEntry("hello\nworld", model.ValueTypeDoc)); err != nil {
+		t.Fatalf("SetEntry error: %v", err)
+	}
+
+	entry, err := GetEntry(dsn, "s1", "DOC")
+	if err != nil {
+		t.Fatalf("GetEntry error: %v", err)
+	}
+	if entry.ValueType != model.ValueTypeDoc || entry.Value != "hello\nworld" {
+		t.Fatalf("entry = %#v, want doc content", entry)
+	}
+
+	resolved, err := ResolveEntries(dsn, "s1")
+	if err != nil {
+		t.Fatalf("ResolveEntries error: %v", err)
+	}
+	if resolved["DOC"].ValueType != model.ValueTypeDoc {
+		t.Fatalf("resolved DOC type = %q, want doc", resolved["DOC"].ValueType)
 	}
 }
 

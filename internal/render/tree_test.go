@@ -1,6 +1,8 @@
 package render
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,10 +30,10 @@ func TestTreeSingleRoot(t *testing.T) {
 	if !strings.Contains(output, "abc123") {
 		t.Errorf("output should contain session ID abc123, got: %s", output)
 	}
-	if !strings.Contains(output, "PROJECT_ID=gitlab-org/myproject") {
+	if !strings.Contains(output, "PROJECT_ID [string] gitlab-org/myproject") {
 		t.Errorf("output should contain PROJECT_ID, got: %s", output)
 	}
-	if !strings.Contains(output, "MR_IID=412") {
+	if !strings.Contains(output, "MR_IID [string] 412") {
 		t.Errorf("output should contain MR_IID, got: %s", output)
 	}
 }
@@ -67,7 +69,7 @@ func TestTreeRootWithOneChild(t *testing.T) {
 	if !strings.Contains(output, "└── def456") {
 		t.Errorf("output should contain └── connector for single child, got: %s", output)
 	}
-	if !strings.Contains(output, "DISCUSSION_ID=abc123def456") {
+	if !strings.Contains(output, "DISCUSSION_ID [string] abc123def456") {
 		t.Errorf("output should contain child data, got: %s", output)
 	}
 }
@@ -108,10 +110,10 @@ func TestTreeRootWithTwoChildren(t *testing.T) {
 	if !strings.Contains(output, "└── ghi789") {
 		t.Errorf("output should contain └── connector for last child, got: %s", output)
 	}
-	if !strings.Contains(output, "DISCUSSION_ID=abc123def456") {
+	if !strings.Contains(output, "DISCUSSION_ID [string] abc123def456") {
 		t.Errorf("output should contain first child data, got: %s", output)
 	}
-	if !strings.Contains(output, "DISCUSSION_ID=xyz789abc012") {
+	if !strings.Contains(output, "DISCUSSION_ID [string] xyz789abc012") {
 		t.Errorf("output should contain last child data, got: %s", output)
 	}
 }
@@ -157,7 +159,7 @@ func TestTreeMultiLevel(t *testing.T) {
 	if !strings.Contains(output, "jkl012") {
 		t.Errorf("output should contain grandchild jkl012, got: %s", output)
 	}
-	if !strings.Contains(output, "CHUNK_ID=zzz") {
+	if !strings.Contains(output, "CHUNK_ID [string] zzz") {
 		t.Errorf("output should contain grandchild data, got: %s", output)
 	}
 }
@@ -183,6 +185,60 @@ func TestTreeNilSessions(t *testing.T) {
 	}
 	if output != "" {
 		t.Errorf("expected empty output for nil sessions, got: %s", output)
+	}
+}
+
+func TestTreeFormatsFileRefAsPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "spec.yaml")
+	if err := os.WriteFile(path, []byte("openapi: 3.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cf := &model.ContextFile{
+		Sessions: map[string]*model.Session{
+			"root": {
+				Data: map[string]string{"SPEC": path},
+				Entries: map[string]model.Entry{
+					"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+				},
+			},
+		},
+	}
+
+	output, err := Tree(cf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(output, "SPEC [path] "+path) {
+		t.Fatalf("output = %s, want [path] label", output)
+	}
+}
+
+func TestTreePreviewsFirstLine(t *testing.T) {
+	cf := &model.ContextFile{
+		Sessions: map[string]*model.Session{
+			"root": {
+				Data: map[string]string{
+					"DOC":  "doc line\nhidden line",
+					"TEXT": "text line\nhidden line",
+				},
+				Entries: map[string]model.Entry{
+					"DOC":  model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
+					"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
+				},
+			},
+		},
+	}
+
+	output, err := Tree(cf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(output, `\n`) || strings.Contains(output, "hidden line") {
+		t.Fatalf("output = %q, want first-line previews only", output)
+	}
+	if !strings.Contains(output, "DOC [doc]") || !strings.Contains(output, "doc line") || !strings.Contains(output, "TEXT [string] text line") {
+		t.Fatalf("output = %q, want doc and string previews", output)
 	}
 }
 

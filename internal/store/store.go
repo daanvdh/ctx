@@ -19,8 +19,11 @@ type Store interface {
 	Save(ctx context.Context, cf *model.ContextFile) error
 	CreateSession(ctx context.Context, id string, parentID *string) error
 	SetValue(ctx context.Context, sessionID, key, value string) error
+	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
 	GetValue(ctx context.Context, sessionID, key string) (string, error)
+	GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error)
 	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
+	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
 	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
 	DeleteSessionTree(ctx context.Context, sessionID string) error
@@ -66,7 +69,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
-	if current >= 2 {
+	if current >= 3 {
 		return nil
 	}
 
@@ -112,10 +115,46 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("store: record schema migration: %w", err)
 		}
 	}
+	if current < 3 {
+		hasColumn, err := columnExists(ctx, tx, "session_data", "value_type")
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE session_data ADD COLUMN value_type TEXT NOT NULL DEFAULT 'string'`); err != nil {
+				return fmt.Errorf("store: add session_data.value_type: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, ?)`, time.Now()); err != nil {
+			return fmt.Errorf("store: record schema migration: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit migration: %w", err)
 	}
 	return nil
+}
+
+func columnExists(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, fmt.Errorf("store: inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return false, fmt.Errorf("store: scan %s columns: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func Load(path string) (*model.ContextFile, error) {
@@ -144,7 +183,7 @@ func (s *SQLite) Load(ctx context.Context) (*model.ContextFile, error) {
 		if err := rows.Scan(&id, &parentID, &created); err != nil {
 			return nil, fmt.Errorf("store: scan session: %w", err)
 		}
-		sess := &model.Session{Created: created, Data: make(map[string]string)}
+		sess := &model.Session{Created: created, Data: make(map[string]string), Entries: make(map[string]model.Entry)}
 		if parentID.Valid && parentID.String != "" {
 			pid := parentID.String
 			sess.Parent = &pid
@@ -155,7 +194,7 @@ func (s *SQLite) Load(ctx context.Context) (*model.ContextFile, error) {
 		return nil, fmt.Errorf("store: iterate sessions: %w", err)
 	}
 
-	dataRows, err := db.QueryContext(ctx, `SELECT session_id, key, value FROM session_data`)
+	dataRows, err := db.QueryContext(ctx, `SELECT session_id, key, value, value_type FROM session_data`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query session_data: %w", err)
 	}
@@ -163,15 +202,17 @@ func (s *SQLite) Load(ctx context.Context) (*model.ContextFile, error) {
 
 	for dataRows.Next() {
 		var sessionID, key, value string
-		if err := dataRows.Scan(&sessionID, &key, &value); err != nil {
+		var valueType model.ValueType
+		if err := dataRows.Scan(&sessionID, &key, &value, &valueType); err != nil {
 			return nil, fmt.Errorf("store: scan session_data: %w", err)
 		}
 		sess, ok := cf.Sessions[sessionID]
 		if !ok {
-			sess = &model.Session{Data: make(map[string]string)}
+			sess = &model.Session{Data: make(map[string]string), Entries: make(map[string]model.Entry)}
 			cf.Sessions[sessionID] = sess
 		}
 		sess.Data[key] = value
+		sess.Entries[key] = model.NewEntry(value, valueType)
 	}
 	if err := dataRows.Err(); err != nil {
 		return nil, fmt.Errorf("store: iterate session_data: %w", err)
@@ -222,7 +263,13 @@ func (s *SQLite) save(ctx context.Context, cf *model.ContextFile) error {
 			return fmt.Errorf("store: insert session %s: %w", id, err)
 		}
 		for key, value := range sess.Data {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO session_data (session_id, key, value) VALUES (?, ?, ?)`, id, key, value); err != nil {
+			entry := model.NewEntry(value, model.ValueTypeString)
+			if sess.Entries != nil {
+				if typed, ok := sess.Entries[key]; ok {
+					entry = typed
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO session_data (session_id, key, value, value_type) VALUES (?, ?, ?, ?)`, id, key, entry.Value, entry.ValueType); err != nil {
 				return fmt.Errorf("store: insert data %s.%s: %w", id, key, err)
 			}
 		}
@@ -290,12 +337,20 @@ func SetValue(path, sessionID, key, value string) error {
 }
 
 func (s *SQLite) SetValue(ctx context.Context, sessionID, key, value string) error {
+	return s.SetEntry(ctx, sessionID, key, model.NewEntry(value, model.ValueTypeString))
+}
+
+func SetEntry(path, sessionID, key string, entry model.Entry) error {
+	return NewSQLite(path).SetEntry(context.Background(), sessionID, key, entry)
+}
+
+func (s *SQLite) SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
 	return retryBusy(ctx, func() error {
-		return s.setValue(ctx, sessionID, key, value)
+		return s.setEntry(ctx, sessionID, key, entry)
 	})
 }
 
-func (s *SQLite) setValue(ctx context.Context, sessionID, key, value string) error {
+func (s *SQLite) setEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
 	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
@@ -316,11 +371,12 @@ func (s *SQLite) setValue(ctx context.Context, sessionID, key, value string) err
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
+	entry = model.NewEntry(entry.Value, entry.ValueType)
 	if _, err := tx.ExecContext(ctx, `
-        INSERT INTO session_data (session_id, key, value)
-        VALUES (?, ?, ?)
-        ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value
-    `, sessionID, key, value); err != nil {
+        INSERT INTO session_data (session_id, key, value, value_type)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, value_type = excluded.value_type
+    `, sessionID, key, entry.Value, entry.ValueType); err != nil {
 		return fmt.Errorf("store: set data %s.%s: %w", sessionID, key, err)
 	}
 
@@ -335,18 +391,30 @@ func GetValue(path, sessionID, key string) (string, error) {
 }
 
 func (s *SQLite) GetValue(ctx context.Context, sessionID, key string) (string, error) {
-	db, err := initDB(ctx, s.path)
+	entry, err := s.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
+	}
+	return entry.Value, nil
+}
+
+func GetEntry(path, sessionID, key string) (model.Entry, error) {
+	return NewSQLite(path).GetEntry(context.Background(), sessionID, key)
+}
+
+func (s *SQLite) GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error) {
+	db, err := initDB(ctx, s.path)
+	if err != nil {
+		return model.Entry{}, err
 	}
 	defer db.Close()
 
 	if err := ensureSession(ctx, db, sessionID); err != nil {
-		return "", err
+		return model.Entry{}, err
 	}
 
 	const query = visibleScopeCTE + `
-        SELECT session_data.value
+        SELECT session_data.value, session_data.value_type
         FROM visible_scope
         JOIN session_data ON session_data.session_id = visible_scope.id
         WHERE session_data.key = ?
@@ -354,13 +422,14 @@ func (s *SQLite) GetValue(ctx context.Context, sessionID, key string) (string, e
         LIMIT 1`
 
 	var value string
-	if err := db.QueryRowContext(ctx, query, sessionID, sessionID, key).Scan(&value); err != nil {
+	var valueType model.ValueType
+	if err := db.QueryRowContext(ctx, query, sessionID, sessionID, key).Scan(&value, &valueType); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
+			return model.Entry{}, fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
 		}
-		return "", fmt.Errorf("store: get data %s.%s: %w", sessionID, key, err)
+		return model.Entry{}, fmt.Errorf("store: get data %s.%s: %w", sessionID, key, err)
 	}
-	return value, nil
+	return model.NewEntry(value, valueType), nil
 }
 
 func ShareContext(path, fromSessionID, toSessionID string) error {
@@ -415,6 +484,22 @@ func Resolve(path, sessionID string) (map[string]string, error) {
 }
 
 func (s *SQLite) Resolve(ctx context.Context, sessionID string) (map[string]string, error) {
+	entries, err := s.ResolveEntries(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	resolved := make(map[string]string, len(entries))
+	for key, entry := range entries {
+		resolved[key] = entry.Value
+	}
+	return resolved, nil
+}
+
+func ResolveEntries(path, sessionID string) (map[string]model.Entry, error) {
+	return NewSQLite(path).ResolveEntries(context.Background(), sessionID)
+}
+
+func (s *SQLite) ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error) {
 	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return nil, err
@@ -426,7 +511,7 @@ func (s *SQLite) Resolve(ctx context.Context, sessionID string) (map[string]stri
 	}
 
 	const query = visibleScopeCTE + `
-        SELECT session_data.key, session_data.value
+        SELECT session_data.key, session_data.value, session_data.value_type
         FROM visible_scope
         JOIN session_data ON session_data.session_id = visible_scope.id
         ORDER BY visible_scope.priority, visible_scope.share_order, visible_scope.depth`
@@ -437,14 +522,15 @@ func (s *SQLite) Resolve(ctx context.Context, sessionID string) (map[string]stri
 	}
 	defer rows.Close()
 
-	resolved := make(map[string]string)
+	resolved := make(map[string]model.Entry)
 	for rows.Next() {
 		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
+		var valueType model.ValueType
+		if err := rows.Scan(&key, &value, &valueType); err != nil {
 			return nil, fmt.Errorf("store: scan resolved data: %w", err)
 		}
 		if _, exists := resolved[key]; !exists {
-			resolved[key] = value
+			resolved[key] = model.NewEntry(value, valueType)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -514,7 +600,7 @@ func (s *SQLite) SessionNodes(ctx context.Context) ([]model.SessionNode, error) 
 		if err := rows.Scan(&id, &parentID); err != nil {
 			return nil, fmt.Errorf("store: scan session node: %w", err)
 		}
-		node := &model.SessionNode{ID: id, Data: make(map[string]string)}
+		node := &model.SessionNode{ID: id, Data: make(map[string]string), Entries: make(map[string]model.Entry)}
 		if parentID.Valid && parentID.String != "" {
 			parent := parentID.String
 			node.Parent = &parent
@@ -526,7 +612,7 @@ func (s *SQLite) SessionNodes(ctx context.Context) ([]model.SessionNode, error) 
 		return nil, fmt.Errorf("store: iterate session nodes: %w", err)
 	}
 
-	dataRows, err := db.QueryContext(ctx, `SELECT session_id, key, value FROM session_data ORDER BY session_id, key`)
+	dataRows, err := db.QueryContext(ctx, `SELECT session_id, key, value, value_type FROM session_data ORDER BY session_id, key`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query session node data: %w", err)
 	}
@@ -534,11 +620,13 @@ func (s *SQLite) SessionNodes(ctx context.Context) ([]model.SessionNode, error) 
 
 	for dataRows.Next() {
 		var sessionID, key, value string
-		if err := dataRows.Scan(&sessionID, &key, &value); err != nil {
+		var valueType model.ValueType
+		if err := dataRows.Scan(&sessionID, &key, &value, &valueType); err != nil {
 			return nil, fmt.Errorf("store: scan session node data: %w", err)
 		}
 		if node, ok := nodesByID[sessionID]; ok {
 			node.Data[key] = value
+			node.Entries[key] = model.NewEntry(value, valueType)
 		}
 	}
 	if err := dataRows.Err(); err != nil {

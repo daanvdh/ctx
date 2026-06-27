@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"ctx/internal/model"
+	"ctx/internal/textutil"
 )
 
 const (
@@ -52,8 +53,9 @@ func TreeNodes(nodes []model.SessionNode) (string, error) {
 	cf := &model.ContextFile{Sessions: make(map[string]*model.Session, len(nodes))}
 	for _, node := range nodes {
 		cf.Sessions[node.ID] = &model.Session{
-			Parent: node.Parent,
-			Data:   node.Data,
+			Parent:  node.Parent,
+			Data:    node.Data,
+			Entries: node.Entries,
 		}
 	}
 	return Tree(cf)
@@ -79,7 +81,13 @@ func writeNode(sb *strings.Builder, cf *model.ContextFile, id string, children m
 		} else {
 			indent = strings.Repeat(" ", 4+len(prefix))
 		}
-		sb.WriteString(indent + k + "=" + s.Data[k] + "\n")
+		entry := model.NewEntry(s.Data[k], model.ValueTypeString)
+		if s.Entries != nil {
+			if typed, ok := s.Entries[k]; ok {
+				entry = typed
+			}
+		}
+		sb.WriteString(indent + textutil.Line(k, entry) + "\n")
 	}
 
 	if kids, ok := children[id]; ok {

@@ -1,9 +1,10 @@
 # ctx — Agent Context Manager
 
-`ctx` is a tiny command-line tool that provides a hierarchical, key-value store for
-agent‑oriented workflows. It lets an orchestrator create *sessions* (a lightweight
-context) and attach arbitrary string data to them. Sub‑agents can inherit the
-data of their ancestors by simply receiving the session identifier.
+`ctx` is a tiny command-line tool that provides a hierarchical, typed key-value
+store for agent‑oriented workflows. It lets an orchestrator create *sessions* (a
+lightweight context) and attach scalar strings, long-form documents, or file
+references to them. Sub‑agents can inherit the data of their ancestors by simply
+receiving the session identifier.
 
 The entire state lives in an SQLite database (`ctx.sqlite`) which is safe for
 concurrent access, has atomic writes and does not require any external service.
@@ -11,7 +12,7 @@ concurrent access, has atomic writes and does not require any external service.
 ## Quick Install
 
 ```bash
-# Prerequisite: Go 1.21+ (the build requires Go 1.25)
+# Prerequisite: Go 1.21+
 git clone https://github.com/daanvdh/ctx.git
 cd ctx
 make build               # compiles the binary to ./bin/ctx
@@ -50,10 +51,12 @@ go install github.com/daanvdh/ctx@latest
 | Command | Synopsis | Description |
 |---|---|---|
 | `ctx new [options] [custom_id]` | `ctx new`<br>`ctx new <parent-id>`<br>`ctx new my-custom-id`<br>`ctx new my-custom-id --parent <parent-id>`<br>`ctx new --help` | Create a new session. If a custom ID is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent can be set explicitly via `--parent`, or implicitly from the `CTX_ID` environment variable if present. Use `--help` for usage information. |
-| `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store *value* under *key* in the specified session (overwrites existing key). |
-| `ctx get [session] <key>` | `ctx get $SID PROJECT_ID`<br>`CTX_ID=$SID ctx get PROJECT_ID` | Retrieve a value, searching the session, shared contexts, and then ancestors. Prints the value to stdout. Fails if the key cannot be found. |
-| `ctx show [session]` | `ctx show $SID` | Print all visible keys as `KEY = VALUE` lines for human-readable inspection. |
-| `ctx export [session]` | `ctx export $SID` | Emit all visible keys as shell-compatible assignments, including `CTX_ID`. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
+| `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store a scalar string under *key* in the specified session (overwrites existing key). |
+| `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx show` and `ctx tree`. |
+| `ctx set [session] <key> --path <path>` | `ctx set $SID API_SPEC --path ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
+| `ctx get [session] <key> [--path\|--preview]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --preview`<br>`ctx get $SID STORY --path` | Retrieve a visible value, searching the session, shared contexts, and then ancestors. For `file_ref`, default output is the referenced file content. `--preview` prints the first 10 lines. `--path` returns the stored path for `file_ref`, writes a `doc` to a temp file and returns that path, and returns the value for strings. |
+| `ctx show [session]` | `ctx show $SID` | Print all visible keys with type tags. Strings and documents are shown as first-line previews; path entries are shown as paths. |
+| `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
 | `ctx render [--ignore-missing] [session] <key>` | `ctx render $SID PROMPT` | Render a stored template by substituting `$VAR` placeholders from visible context. |
 | `ctx execute [session] <template>` | `ctx execute $SID review` | Execute a trigger template from the trigger directory. The filename extension is optional. |
@@ -64,6 +67,25 @@ go install github.com/daanvdh/ctx@latest
 **Note:** If `CTX_ID` is set in the environment, commands that take a session can omit that argument. `ctx new` uses `CTX_ID` as the implicit parent when no `--parent` flag is provided.
 
 All commands exit with status 0 on success; error details are written to **stderr**.
+
+## Value Types
+
+Every ctx entry has a value type:
+
+| Type | Set with | `ctx get` | Export behavior |
+|---|---|---|---|
+| `string` | `ctx set KEY value` | Stored value | Included by default |
+| `doc` | `ctx set KEY --doc "..."` or `ctx set KEY --doc < file.md` | Full document content | Omitted by default; include with `--include-docs` |
+| `file_ref` | `ctx set KEY --path ./path` | Current file content | Omitted by default; include path with `--files-as-paths` |
+| `file_bin` | Reserved | Not implemented | Not exported |
+
+`ctx render` resolves all implemented types to content before template
+substitution, so consumers can use `$KEY` without knowing whether it came from a
+string, document, or file reference. If a referenced file no longer exists,
+`ctx get` and `ctx render` fail with a clear error.
+
+Documents are limited to 500KB. Use `--path` for larger local files or for
+content that should be read fresh each time.
 
 ## MCP Server POC
 
@@ -136,11 +158,11 @@ Available tools:
 | Tool | Description |
 |---|---|
 | `ctx_new` | Create a session, optionally with a custom id and parent. |
-| `ctx_set` | Store a string key/value in a session. |
-| `ctx_get` | Get a visible value from a session, shared context, or ancestor. |
+| `ctx_set` | Store a value in a session. Pass `is_doc: true` for long-form documents. File references are CLI-only. |
+| `ctx_get` | Get a visible value from a session, shared context, or ancestor. Pass `preview: true` to return the first 10 lines. |
 | `ctx_resolve` | Return all visible key/value pairs as structured data. |
-| `ctx_show` | Return visible key/value pairs as `KEY = VALUE` lines. |
-| `ctx_export` | Return shell `export` lines, including `CTX_ID`. |
+| `ctx_show` | Return human-readable lines and structured entries including `value_type`, previews, sizes, and file path status. |
+| `ctx_export` | Return default shell `export` lines, including `CTX_ID`. Documents and file references are omitted. |
 | `ctx_share` | Share one session's context into another session. |
 | `ctx_tree` | Render the complete session tree as text or JSON. |
 | `ctx_render` | Render a stored template key with visible context variables. |
@@ -195,9 +217,10 @@ echo "$PROJECT_ID"   # gitlab-org/myproject
 echo "$MR_IID"       # 412
 echo "$DISCUSSION_ID" # abc123def456
 
-# Bonus: share files via context.
-ctx set $ROOT REPORT_PATH "/tmp/report.txt"
-cat "$(ctx get $CHILD REPORT_PATH)"   # prints the file content from the child’s view
+# Bonus: reference files through context.
+ctx set $ROOT REPORT --path /tmp/report.txt
+ctx get $CHILD REPORT                  # prints the file content from the child's view
+ctx get $CHILD REPORT --path           # prints /tmp/report.txt
 ```
 
 ## Trigger Templates
@@ -224,21 +247,25 @@ When a trigger fires, ctx renders the prompt from the triggering session, create
 
 ```text
 5f2a1c9b
- PROJECT_ID=gitlab-org/myproject
- MR_IID=412
+ PROJECT_ID [string] gitlab-org/myproject
+ MR_IID [string] 412
 ├── 8e7d3a4f
-│     DISCUSSION_ID=abc123def456
+│     DISCUSSION_ID [string] abc123def456
 └── a1b2c3d4
-      REPORT_PATH=/tmp/report.txt
+      REPORT [path] /tmp/report.txt
+      STORY [doc] 1.4 KB # Story
 ```
 
 The tree displays sessions sorted alphabetically, with child nodes indented.
-Key/value pairs belonging to a session are listed directly beneath its ID.
+Entries belonging to a session are listed directly beneath its ID with type
+tags. Strings and documents are shown as first-line previews, and file
+references are shown as paths.
 
 ## Design Highlights
 
 - **SQLite backend** – guarantees atomic writes and handles concurrent reads/writes without external locking.
 - **Hierarchical lookup** – `ctx get` walks up the parent chain (max 50 hops) so children automatically inherit keys from ancestors. Later entries shadow earlier ones.
+- **Typed values** – scalar strings, long-form documents, and local file references resolve consistently through `ctx get` and `ctx render`.
 - **Session IDs** – generated with `crypto/rand`, yielding an eight‑character lowercase hex string (`xxxxxxxx`). Collisions are extremely unlikely.
 - **Depth limit** – prevents infinite loops in corrupted data (e.g., circular parent references).
 - **Portable** – No external dependencies; the only required runtime is the SQLite driver bundled via Go modules.

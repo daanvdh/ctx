@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"ctx/internal/app"
+	"ctx/internal/model"
 )
 
 const protocolVersion = "2025-06-18"
@@ -570,13 +571,22 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]string{"id": id}
 	case "ctx_set":
-		err := a.SetValue(ctx, requiredString(args, "session_id"), requiredString(args, "key"), requiredString(args, "value"))
+		valueType := model.ValueTypeString
+		if boolDefault(args, "is_doc", false) {
+			valueType = model.ValueTypeDoc
+		}
+		err := a.SetEntry(ctx, requiredString(args, "session_id"), requiredString(args, "key"), model.NewEntry(requiredString(args, "value"), valueType))
 		if err != nil {
 			return toolError(err), nil
 		}
 		out = ok()
 	case "ctx_get":
-		value, err := a.GetValue(ctx, requiredString(args, "session_id"), requiredString(args, "key"))
+		var value string
+		if boolDefault(args, "preview", false) {
+			value, err = a.GetPreview(ctx, requiredString(args, "session_id"), requiredString(args, "key"))
+		} else {
+			value, err = a.GetValue(ctx, requiredString(args, "session_id"), requiredString(args, "key"))
+		}
 		if err != nil {
 			return toolError(err), nil
 		}
@@ -592,9 +602,13 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		if err != nil {
 			return toolError(err), nil
 		}
-		out = map[string]any{"lines": lines, "text": strings.Join(lines, "\n")}
+		entries, err := a.ShowEntries(ctx, requiredString(args, "session_id"))
+		if err != nil {
+			return toolError(err), nil
+		}
+		out = map[string]any{"lines": lines, "text": strings.Join(lines, "\n"), "entries": entries}
 	case "ctx_export":
-		lines, err := a.Export(ctx, requiredString(args, "session_id"))
+		lines, err := a.Export(ctx, requiredString(args, "session_id"), false, false)
 		if err != nil {
 			return toolError(err), nil
 		}
