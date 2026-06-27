@@ -1,3 +1,4 @@
+// Package entryfmt centralizes human-readable formatting for typed ctx entries.
 package entryfmt
 
 import (
@@ -8,8 +9,10 @@ import (
 	"ctx/internal/model"
 )
 
+// PreviewChars is the default maximum number of characters shown in entry previews.
 const PreviewChars = 60
 
+// Line returns the single-line display form for a typed entry.
 func Line(key string, entry model.Entry) string {
 	switch entry.ValueType {
 	case model.ValueTypeDoc:
@@ -26,6 +29,7 @@ func Line(key string, entry model.Entry) string {
 	}
 }
 
+// Preview returns the first line of a value, truncated to max characters.
 func Preview(value string, max int) string {
 	if max <= 0 {
 		return ""
@@ -42,6 +46,7 @@ func Preview(value string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
+// HumanSize formats a byte count for compact display.
 func HumanSize(size int) string {
 	if size < 1024 {
 		return fmt.Sprintf("%d B", size)
