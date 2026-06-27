@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"ctx/internal/entryfmt"
+	"ctx/internal/textutil"
 	"ctx/internal/model"
 )
 
@@ -87,7 +87,7 @@ func writeNode(sb *strings.Builder, cf *model.ContextFile, id string, children m
 				entry = typed
 			}
 		}
-		sb.WriteString(indent + entryfmt.Line(k, entry) + "\n")
+		sb.WriteString(indent + textutil.Line(k, entry) + "\n")
 	}
 
 	if kids, ok := children[id]; ok {

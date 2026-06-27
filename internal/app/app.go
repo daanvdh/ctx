@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"ctx/internal/config"
-	"ctx/internal/entryfmt"
+	"ctx/internal/textutil"
 	"ctx/internal/model"
 	"ctx/internal/render"
 	"ctx/internal/session"
@@ -225,7 +225,7 @@ func (a *App) Show(ctx context.Context, sessionID string) ([]string, error) {
 
 	lines := make([]string, 0, len(entries))
 	for _, key := range sortedEntryKeys(entries) {
-		lines = append(lines, entryfmt.Line(key, entries[key]))
+		lines = append(lines, textutil.Line(key, entries[key]))
 	}
 	return lines, nil
 }
@@ -247,7 +247,7 @@ func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]a
 			item["value"] = entry.Value
 		case model.ValueTypeDoc:
 			item["size_bytes"] = len([]byte(entry.Value))
-			item["preview"] = entryfmt.Preview(entry.Value, entryfmt.PreviewChars)
+			item["preview"] = textutil.Preview(entry.Value, textutil.PreviewChars)
 		case model.ValueTypeFileRef:
 			item["path"] = entry.Value
 			_, err := os.Stat(entry.Value)

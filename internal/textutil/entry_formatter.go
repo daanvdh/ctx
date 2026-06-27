@@ -1,5 +1,5 @@
-// Package entryfmt centralizes human-readable formatting for typed ctx entries.
-package entryfmt
+// Package textutil centralizes human-readable formatting for typed ctx entries.
+package textutil
 
 import (
 	"fmt"

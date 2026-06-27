@@ -1,4 +1,4 @@
-package entryfmt
+package textutil
 
 import (
 	"strings"
