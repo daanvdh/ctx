@@ -38,9 +38,6 @@ func parseSetArgs(args []string) (setArgs, error) {
 	}
 	flagIndex := -1
 	for i, arg := range args {
-		if arg == "--file-ref" {
-			return setArgs{}, fmt.Errorf("unknown flag --file-ref; use --ref")
-		}
 		if arg == "--doc" || arg == "--ref" {
 			if flagIndex != -1 {
 				return setArgs{}, fmt.Errorf("--doc and --ref are mutually exclusive")
