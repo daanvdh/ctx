@@ -283,6 +283,25 @@ func TestShowFormatsFileRefAsPath(t *testing.T) {
 	}
 }
 
+func TestShowPreviewsFirstLine(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"DOC":  model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
+		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, `\n`) || strings.Contains(got, "hidden line") {
+		t.Fatalf("Show = %q, want first-line previews only", got)
+	}
+	if !strings.Contains(got, "DOC [doc]") || !strings.Contains(got, "doc line") || !strings.Contains(got, "TEXT [string] text line") {
+		t.Fatalf("Show = %q, want doc and string previews", got)
+	}
+}
+
 func TestRenderUsesInjectedStore(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE"},

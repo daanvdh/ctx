@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ctx/internal/config"
+	"ctx/internal/entryfmt"
 	"ctx/internal/model"
 	"ctx/internal/render"
 	"ctx/internal/session"
@@ -224,7 +225,7 @@ func (a *App) Show(ctx context.Context, sessionID string) ([]string, error) {
 
 	lines := make([]string, 0, len(entries))
 	for _, key := range sortedEntryKeys(entries) {
-		lines = append(lines, formatEntryLine(key, entries[key]))
+		lines = append(lines, entryfmt.Line(key, entries[key]))
 	}
 	return lines, nil
 }
@@ -246,7 +247,7 @@ func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]a
 			item["value"] = entry.Value
 		case model.ValueTypeDoc:
 			item["size_bytes"] = len([]byte(entry.Value))
-			item["preview"] = preview(entry.Value, 60)
+			item["preview"] = entryfmt.Preview(entry.Value, entryfmt.PreviewChars)
 		case model.ValueTypeFileRef:
 			item["path"] = entry.Value
 			_, err := os.Stat(entry.Value)
@@ -493,41 +494,6 @@ func firstLines(value string, limit int) string {
 		return value
 	}
 	return strings.Join(lines[:limit], "")
-}
-
-func formatEntryLine(key string, entry model.Entry) string {
-	switch entry.ValueType {
-	case model.ValueTypeDoc:
-		return fmt.Sprintf("%s [doc] %s %q", key, humanKB(len([]byte(entry.Value))), preview(entry.Value, 60))
-	case model.ValueTypeFileRef:
-		if _, err := os.Stat(entry.Value); err != nil && os.IsNotExist(err) {
-			return fmt.Sprintf("%s [path] %s", key, "\u26a0 path not found")
-		}
-		return fmt.Sprintf("%s [path] %s", key, entry.Value)
-	case model.ValueTypeString:
-		return fmt.Sprintf("%s [string] %s", key, entry.Value)
-	default:
-		return fmt.Sprintf("%s [%s] not implemented", key, entry.ValueType)
-	}
-}
-
-func preview(value string, max int) string {
-	value = strings.ReplaceAll(value, "\n", "\\n")
-	if len(value) <= max {
-		return value
-	}
-	if max <= 3 {
-		return value[:max]
-	}
-	return value[:max-3] + "..."
-}
-
-func humanKB(size int) string {
-	if size < 1024 {
-		return fmt.Sprintf("%d B", size)
-	}
-	kb := float64(size) / 1024.0
-	return fmt.Sprintf("%.1f KB", kb)
 }
 
 func shellSingleQuote(v string) string {

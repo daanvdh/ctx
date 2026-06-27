@@ -55,7 +55,7 @@ go install github.com/daanvdh/ctx@latest
 | `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx show` and `ctx tree`. |
 | `ctx set [session] <key> --path <path>` | `ctx set $SID API_SPEC --path ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
 | `ctx get [session] <key> [--path\|--preview]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --preview`<br>`ctx get $SID STORY --path` | Retrieve a visible value, searching the session, shared contexts, and then ancestors. For `file_ref`, default output is the referenced file content. `--preview` prints the first 10 lines. `--path` returns the stored path for `file_ref`, writes a `doc` to a temp file and returns that path, and returns the value for strings. |
-| `ctx show [session]` | `ctx show $SID` | Print all visible keys with type tags. Documents and file references are shown as previews or paths, not full content. |
+| `ctx show [session]` | `ctx show $SID` | Print all visible keys with type tags. Strings and documents are shown as first-line previews; path entries are shown as paths. |
 | `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
 | `ctx render [--ignore-missing] [session] <key>` | `ctx render $SID PROMPT` | Render a stored template by substituting `$VAR` placeholders from visible context. |
@@ -253,12 +253,13 @@ When a trigger fires, ctx renders the prompt from the triggering session, create
 │     DISCUSSION_ID [string] abc123def456
 └── a1b2c3d4
       REPORT [path] /tmp/report.txt
-      STORY [doc] 1.4 KB "# Story\nAs a user..."
+      STORY [doc] 1.4 KB # Story
 ```
 
 The tree displays sessions sorted alphabetically, with child nodes indented.
 Entries belonging to a session are listed directly beneath its ID with type
-tags. Documents are shown as previews, and file references are shown as paths.
+tags. Strings and documents are shown as first-line previews, and file
+references are shown as paths.
 
 ## Design Highlights
 

@@ -214,6 +214,34 @@ func TestTreeFormatsFileRefAsPath(t *testing.T) {
 	}
 }
 
+func TestTreePreviewsFirstLine(t *testing.T) {
+	cf := &model.ContextFile{
+		Sessions: map[string]*model.Session{
+			"root": {
+				Data: map[string]string{
+					"DOC":  "doc line\nhidden line",
+					"TEXT": "text line\nhidden line",
+				},
+				Entries: map[string]model.Entry{
+					"DOC":  model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
+					"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
+				},
+			},
+		},
+	}
+
+	output, err := Tree(cf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(output, `\n`) || strings.Contains(output, "hidden line") {
+		t.Fatalf("output = %q, want first-line previews only", output)
+	}
+	if !strings.Contains(output, "DOC [doc]") || !strings.Contains(output, "doc line") || !strings.Contains(output, "TEXT [string] text line") {
+		t.Fatalf("output = %q, want doc and string previews", output)
+	}
+}
+
 func TestTreeDeterministicOutput(t *testing.T) {
 	parent := "root_session"
 	parent2 := parent

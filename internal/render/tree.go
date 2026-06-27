@@ -1,11 +1,10 @@
 package render
 
 import (
-	"fmt"
-	"os"
 	"sort"
 	"strings"
 
+	"ctx/internal/entryfmt"
 	"ctx/internal/model"
 )
 
@@ -88,7 +87,7 @@ func writeNode(sb *strings.Builder, cf *model.ContextFile, id string, children m
 				entry = typed
 			}
 		}
-		sb.WriteString(indent + formatEntry(k, entry) + "\n")
+		sb.WriteString(indent + entryfmt.Line(k, entry) + "\n")
 	}
 
 	if kids, ok := children[id]; ok {
@@ -107,40 +106,6 @@ func writeNode(sb *strings.Builder, cf *model.ContextFile, id string, children m
 			writeNode(sb, cf, childID, children, newPrefix, false, childIsLast)
 		}
 	}
-}
-
-func formatEntry(key string, entry model.Entry) string {
-	switch entry.ValueType {
-	case model.ValueTypeDoc:
-		return fmt.Sprintf("%s [doc] %s %q", key, humanKB(len([]byte(entry.Value))), preview(entry.Value, 60))
-	case model.ValueTypeFileRef:
-		if _, err := os.Stat(entry.Value); err != nil && os.IsNotExist(err) {
-			return fmt.Sprintf("%s [path] %s", key, "\u26a0 path not found")
-		}
-		return fmt.Sprintf("%s [path] %s", key, entry.Value)
-	case model.ValueTypeString:
-		return fmt.Sprintf("%s [string] %s", key, entry.Value)
-	default:
-		return fmt.Sprintf("%s [%s] not implemented", key, entry.ValueType)
-	}
-}
-
-func preview(value string, max int) string {
-	value = strings.ReplaceAll(value, "\n", "\\n")
-	if len(value) <= max {
-		return value
-	}
-	if max <= 3 {
-		return value[:max]
-	}
-	return value[:max-3] + "..."
-}
-
-func humanKB(size int) string {
-	if size < 1024 {
-		return fmt.Sprintf("%d B", size)
-	}
-	return fmt.Sprintf("%.1f KB", float64(size)/1024.0)
 }
 
 func sortKeys(m map[string]string) []string {
