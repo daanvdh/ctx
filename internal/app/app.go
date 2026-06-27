@@ -97,6 +97,10 @@ func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error 
 
 func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
 	entry = model.NewEntry(entry.Value, entry.ValueType)
+	entry, err := prepareEntry(entry)
+	if err != nil {
+		return err
+	}
 	if err := validateEntry(entry); err != nil {
 		return err
 	}
@@ -383,6 +387,42 @@ func sortedEntryKeys(m map[string]model.Entry) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func prepareEntry(entry model.Entry) (model.Entry, error) {
+	switch entry.ValueType {
+	case model.ValueTypeFileRef:
+		path, err := absoluteExistingPath(entry.Value)
+		if err != nil {
+			return model.Entry{}, err
+		}
+		entry.Value = path
+	}
+	return entry, nil
+}
+
+func absoluteExistingPath(path string) (string, error) {
+	if _, err := os.Stat(path); err == nil {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve absolute path %s: %w", path, err)
+		}
+		return abs, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat file_ref path %s: %w", path, err)
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute path %s: %w", path, err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("file not found at path: %s", path)
+		}
+		return "", fmt.Errorf("stat file_ref path %s: %w", abs, err)
+	}
+	return abs, nil
 }
 
 func validateEntry(entry model.Entry) error {

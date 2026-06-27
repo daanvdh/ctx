@@ -197,6 +197,26 @@ func TestGetFileRefReadsContentAndPath(t *testing.T) {
 	}
 }
 
+func TestSetFileRefStoresAbsolutePath(t *testing.T) {
+	t.Setenv("CTX_SUPPRESS_TRIGGERS", "1")
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	if err := os.WriteFile("spec.yaml", []byte("openapi: 3.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	want := filepath.Join(tmp, "spec.yaml")
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	if err := a.SetEntry(context.Background(), "s1", "SPEC", model.NewEntry("spec.yaml", model.ValueTypeFileRef)); err != nil {
+		t.Fatalf("SetEntry error: %v", err)
+	}
+	got := fake.entries["SPEC"].Value
+	if got != want {
+		t.Fatalf("stored path = %q, want %q", got, want)
+	}
+}
+
 func TestGetDocPathWritesTempFileAndPreview(t *testing.T) {
 	content := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n"
 	a := NewWithStore(&fakeStore{entries: map[string]model.Entry{
