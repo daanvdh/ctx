@@ -432,6 +432,16 @@ func TestParseTriggerExecutionSession(t *testing.T) {
 	}
 }
 
+func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "command=echo\nkey=STATUS")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.PromptTemplate != "" {
+		t.Fatalf("PromptTemplate = %q, want empty", def.PromptTemplate)
+	}
+}
+
 func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -468,6 +478,43 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	}
 	if !foundLog {
 		t.Fatalf("expected trigger log in values, got %#v", fake.values)
+	}
+}
+
+func TestSetValueExecutesTriggerWithoutPromptArg(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "capture-args.sh")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n' \"$#\" \"$2\" > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "args.txt")
+	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/sh " + scriptPath + " " + outPath
+	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{
+		values: map[string]string{"STATUS": "PENDING"},
+	}
+	a := NewWithStore(fake)
+
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read args output: %v", err)
+	}
+	if got := string(data); got != "1\n\n" {
+		t.Fatalf("args output = %q, want prompt omitted", got)
 	}
 }
 

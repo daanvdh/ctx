@@ -156,14 +156,13 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if len(parts) != 2 {
 		parts = strings.SplitN(content, "---", 2)
 	}
-	if len(parts) != 2 {
-		return TriggerDefinition{}, fmt.Errorf("malformed template %s: missing '---' separator", path)
-	}
 
 	def := TriggerDefinition{
 		Name:           strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
 		Path:           path,
-		PromptTemplate: parts[1],
+	}
+	if len(parts) == 2 {
+		def.PromptTemplate = parts[1]
 	}
 	for _, line := range strings.Split(parts[0], "\n") {
 		line = strings.TrimSpace(stripComment(line))
@@ -269,7 +268,11 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	if len(commandParts) == 0 {
 		return fmt.Errorf("trigger %s has empty command", def.Path)
 	}
-	cmd := exec.CommandContext(ctx, commandParts[0], append(commandParts[1:], renderedPrompt)...)
+	args := commandParts[1:]
+	if renderedPrompt != "" {
+		args = append(args, renderedPrompt)
+	}
+	cmd := exec.CommandContext(ctx, commandParts[0], args...)
 	cmd.Env = append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
