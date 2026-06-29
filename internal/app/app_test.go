@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ctx/internal/model"
 )
@@ -705,6 +706,44 @@ func TestSetValueTriggerRendersCommandPlaceholders(t *testing.T) {
 	}
 	if got := string(data); got != "2\ngo test\n" {
 		t.Fatalf("args output = %q, want command placeholder rendered", got)
+	}
+}
+
+func TestSetValueTriggerSurvivesCanceledContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "delayed-write.sh")
+	script := "#!/bin/sh\nsleep 0.1\nprintf '%s' done > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "trigger.txt")
+	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/sh " + scriptPath + " " + outPath
+	if err := os.WriteFile(filepath.Join(triggerDir, "delayed.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{values: map[string]string{"STATUS": "PENDING"}}
+	a := NewWithStore(fake)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	if err := a.SetValue(ctx, "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read trigger output: %v", err)
+	}
+	if got := string(data); got != "done" {
+		t.Fatalf("trigger output = %q, want command to finish after context cancellation", got)
 	}
 }
 

@@ -242,17 +242,19 @@ func (d TriggerDefinition) Matches(change TriggerChange) (bool, error) {
 }
 
 func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change TriggerChange) error {
-	executionSession, err := a.executionSession(ctx, def, change)
+	triggerCtx := context.WithoutCancel(ctx)
+
+	executionSession, err := a.executionSession(triggerCtx, def, change)
 	if err != nil {
 		return err
 	}
-	vars, err := a.store.Resolve(ctx, change.SessionID)
+	vars, err := a.store.Resolve(triggerCtx, change.SessionID)
 	if err != nil {
 		return err
 	}
 	renderedPrompt, err := render.TemplateString(def.PromptTemplate, vars)
 	if err != nil {
-		return a.writeTriggerLog(ctx, change, triggerLog{
+		return a.writeTriggerLog(triggerCtx, change, triggerLog{
 			Trigger:          def.Name,
 			SessionID:        change.SessionID,
 			Key:              change.Key,
@@ -266,7 +268,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 
 	renderedCommand, err := render.TemplateString(def.Command, vars)
 	if err != nil {
-		return a.writeTriggerLog(ctx, change, triggerLog{
+		return a.writeTriggerLog(triggerCtx, change, triggerLog{
 			Trigger:          def.Name,
 			SessionID:        change.SessionID,
 			Key:              change.Key,
@@ -289,7 +291,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	if renderedPrompt != "" {
 		args = append(args, renderedPrompt)
 	}
-	cmd := exec.CommandContext(ctx, commandParts[0], args...)
+	cmd := exec.CommandContext(triggerCtx, commandParts[0], args...)
 	cmd.Env = append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -307,7 +309,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		}
 	}
 
-	return a.writeTriggerLog(ctx, change, triggerLog{
+	return a.writeTriggerLog(triggerCtx, change, triggerLog{
 		Trigger:          def.Name,
 		SessionID:        change.SessionID,
 		Key:              change.Key,

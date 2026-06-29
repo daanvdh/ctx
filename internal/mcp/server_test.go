@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"ctx/internal/app"
+	"ctx/internal/model"
 )
 
 func TestServerInitializeAndToolCalls(t *testing.T) {
@@ -154,6 +157,102 @@ func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 		t.Fatalf("ctx_show response = %s, want structured doc preview", show)
 	}
 }
+
+func TestServerCtxSetExecutesTriggers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/echo\n---\nhello"
+	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &mcpFakeStore{values: map[string]string{"STATUS": "PENDING"}}
+	server := NewServerWithApp(strings.NewReader(""), &bytes.Buffer{}, func() (*app.App, error) {
+		return app.NewWithStore(fake), nil
+	})
+
+	var input bytes.Buffer
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "ctx_set",
+			"arguments": map[string]any{
+				"session_id": "s1",
+				"key":        "STATUS",
+				"value":      "DONE",
+			},
+		},
+	})
+
+	var output bytes.Buffer
+	server.in = bufio.NewReader(&input)
+	server.out = &output
+	if err := server.Serve(context.Background()); err != nil {
+		t.Fatalf("Serve error: %v", err)
+	}
+
+	foundLog := false
+	for key, value := range fake.values {
+		if strings.HasPrefix(key, "s1.trigger_log.") && strings.Contains(value, `"trigger":"done"`) {
+			foundLog = true
+			break
+		}
+	}
+	if !foundLog {
+		t.Fatalf("expected trigger log in fake store, got %#v", fake.values)
+	}
+}
+
+type mcpFakeStore struct {
+	values map[string]string
+}
+
+func (f *mcpFakeStore) CreateSession(context.Context, string, *string) error { return nil }
+
+func (f *mcpFakeStore) SetValue(_ context.Context, sessionID, key, value string) error {
+	return f.SetEntry(context.Background(), sessionID, key, model.NewEntry(value, model.ValueTypeString))
+}
+
+func (f *mcpFakeStore) SetEntry(_ context.Context, sessionID, key string, entry model.Entry) error {
+	if f.values == nil {
+		f.values = make(map[string]string)
+	}
+	f.values[sessionID+"."+key] = entry.Value
+	f.values[key] = entry.Value
+	return nil
+}
+
+func (f *mcpFakeStore) RemoveEntry(context.Context, string, string) error { return nil }
+
+func (f *mcpFakeStore) GetValue(_ context.Context, _, key string) (string, error) {
+	return f.values[key], nil
+}
+
+func (f *mcpFakeStore) GetEntry(_ context.Context, _, key string) (model.Entry, error) {
+	return model.NewEntry(f.values[key], model.ValueTypeString), nil
+}
+
+func (f *mcpFakeStore) Resolve(context.Context, string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func (f *mcpFakeStore) ResolveEntries(context.Context, string) (map[string]model.Entry, error) {
+	return map[string]model.Entry{}, nil
+}
+
+func (f *mcpFakeStore) ShareContext(context.Context, string, string) error { return nil }
+
+func (f *mcpFakeStore) SessionNodes(context.Context) ([]model.SessionNode, error) {
+	return nil, nil
+}
+
+func (f *mcpFakeStore) DeleteSessionTree(context.Context, string) error { return nil }
 
 func TestServerReturnsToolErrorForMissingArgument(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
