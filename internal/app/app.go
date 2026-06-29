@@ -327,7 +327,10 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	commandParts := strings.Fields(def.Command)
+	commandParts, err := splitCommandLine(def.Command)
+	if err != nil {
+		return fmt.Errorf("invalid command in template: %w", err)
+	}
 	if len(commandParts) == 0 {
 		return fmt.Errorf("empty command in template")
 	}
