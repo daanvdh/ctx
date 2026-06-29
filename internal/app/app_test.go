@@ -588,6 +588,41 @@ func TestExecutePreservesQuotedCommandArg(t *testing.T) {
 	}
 }
 
+func TestExecuteRendersCommandPlaceholders(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "capture-args.sh")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n' \"$#\" \"$2\" > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "args.txt")
+	trigger := "command=/bin/sh " + scriptPath + " " + outPath + ` "$exe"`
+	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"exe": "go test"}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "manual"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read args output: %v", err)
+	}
+	if got := string(data); got != "2\ngo test\n" {
+		t.Fatalf("args output = %q, want command placeholder rendered", got)
+	}
+}
+
 func TestSetValueTriggerPreservesQuotedCommandArg(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -620,6 +655,44 @@ func TestSetValueTriggerPreservesQuotedCommandArg(t *testing.T) {
 	}
 	if got := string(data); got != "2\nsuccess 1\n" {
 		t.Fatalf("args output = %q, want quoted arg preserved", got)
+	}
+}
+
+func TestSetValueTriggerRendersCommandPlaceholders(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "capture-args.sh")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n' \"$#\" \"$2\" > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "args.txt")
+	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/sh " + scriptPath + " " + outPath + ` "$exe"`
+	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{
+		values:   map[string]string{"STATUS": "PENDING"},
+		resolved: map[string]string{"exe": "go test"},
+	}
+	a := NewWithStore(fake)
+
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read args output: %v", err)
+	}
+	if got := string(data); got != "2\ngo test\n" {
+		t.Fatalf("args output = %q, want command placeholder rendered", got)
 	}
 }
 

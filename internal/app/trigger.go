@@ -264,7 +264,21 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		})
 	}
 
-	commandParts, err := splitCommandLine(def.Command)
+	renderedCommand, err := render.TemplateString(def.Command, vars)
+	if err != nil {
+		return a.writeTriggerLog(ctx, change, triggerLog{
+			Trigger:          def.Name,
+			SessionID:        change.SessionID,
+			Key:              change.Key,
+			OldValue:         change.OldValue,
+			NewValue:         change.NewValue,
+			ExecutionSession: executionSession,
+			ExitCode:         -1,
+			Error:            err.Error(),
+		})
+	}
+
+	commandParts, err := splitCommandLine(renderedCommand)
 	if err != nil {
 		return fmt.Errorf("trigger %s has invalid command: %w", def.Path, err)
 	}
