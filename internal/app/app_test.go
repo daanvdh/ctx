@@ -46,6 +46,18 @@ func (f *fakeStore) SetEntry(_ context.Context, sessionID, key string, entry mod
 	return f.err
 }
 
+func (f *fakeStore) RemoveEntry(_ context.Context, sessionID, key string) error {
+	if f.values != nil {
+		delete(f.values, sessionID+"."+key)
+		delete(f.values, key)
+	}
+	if f.entries != nil {
+		delete(f.entries, sessionID+"."+key)
+		delete(f.entries, key)
+	}
+	return f.err
+}
+
 func (f *fakeStore) GetValue(_ context.Context, _, key string) (string, error) {
 	if f.err != nil {
 		return "", f.err
