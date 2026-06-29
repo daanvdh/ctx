@@ -327,7 +327,12 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	commandParts, err := splitCommandLine(def.Command)
+	renderedCommand, err := render.TemplateString(def.Command, vars)
+	if err != nil {
+		return err
+	}
+
+	commandParts, err := splitCommandLine(renderedCommand)
 	if err != nil {
 		return fmt.Errorf("invalid command in template: %w", err)
 	}
