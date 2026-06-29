@@ -1,0 +1,49 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+)
+
+func Rm(ctx context.Context, args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Println(`Usage: ctx rm [session] <entry>
+
+Remove an entry from a session.`)
+			return nil
+		}
+	}
+
+	parsed, err := parseRmArgs(args)
+	if err != nil {
+		return err
+	}
+
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	return a.RemoveEntry(ctx, parsed.sessionID, parsed.entry)
+}
+
+type rmArgs struct {
+	sessionID string
+	entry     string
+}
+
+func parseRmArgs(args []string) (rmArgs, error) {
+	if len(args) != 1 && len(args) != 2 {
+		return rmArgs{}, usage("rm", "ctx rm [session] <entry>")
+	}
+	hasSession := len(args) == 2
+	sessionID, err := sessionArg(args, hasSession)
+	if err != nil {
+		return rmArgs{}, err
+	}
+	entry := args[0]
+	if hasSession {
+		entry = args[1]
+	}
+	return rmArgs{sessionID: sessionID, entry: entry}, nil
+}

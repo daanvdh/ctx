@@ -14,6 +14,7 @@ func main() {
 	commands := map[string]cmd.Command{
 		"new":     {Name: "new", Run: cmd.New},
 		"set":     {Name: "set", Run: cmd.Set},
+		"rm":      {Name: "rm", Run: cmd.Rm},
 		"get":     {Name: "get", Run: cmd.Get},
 		"export":  {Name: "export", Run: cmd.Export},
 		"show":    {Name: "show", Run: cmd.Show},

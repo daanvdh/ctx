@@ -16,6 +16,7 @@ func Help(_ context.Context, _ []string) error {
 	fmt.Println("  new [custom_id] [--parent <parent-id>]   Create a new session. If <custom_id> is omitted an auto‑generated ID is used.")
 	fmt.Println("                                              Use --parent to set the parent explicitly; otherwise CTX_ID env variable is used.")
 	fmt.Println("  set <session> <key> <value>                Set a key in a session")
+	fmt.Println("  rm [session] <entry>                       Remove an entry from a session")
 	fmt.Println("  get <session> <key>                        Get a key from a session")
 	fmt.Println("  share <from> <to>                          Share one session's context with another")
 	fmt.Println("  export <session>                           Export all visible keys")

@@ -29,6 +29,7 @@ type Store interface {
 	CreateSession(ctx context.Context, id string, parentID *string) error
 	SetValue(ctx context.Context, sessionID, key, value string) error
 	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
+	RemoveEntry(ctx context.Context, sessionID, key string) error
 	GetValue(ctx context.Context, sessionID, key string) (string, error)
 	GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error)
 	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
@@ -121,6 +122,10 @@ func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.E
 		OldValue:  oldValue,
 		NewValue:  entry.Value,
 	})
+}
+
+func (a *App) RemoveEntry(ctx context.Context, sessionID, key string) error {
+	return a.store.RemoveEntry(ctx, sessionID, key)
 }
 
 func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, error) {

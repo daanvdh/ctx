@@ -20,6 +20,7 @@ type Store interface {
 	CreateSession(ctx context.Context, id string, parentID *string) error
 	SetValue(ctx context.Context, sessionID, key, value string) error
 	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
+	RemoveEntry(ctx context.Context, sessionID, key string) error
 	GetValue(ctx context.Context, sessionID, key string) (string, error)
 	GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error)
 	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
@@ -378,6 +379,55 @@ func (s *SQLite) setEntry(ctx context.Context, sessionID, key string, entry mode
         ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, value_type = excluded.value_type
     `, sessionID, key, entry.Value, entry.ValueType); err != nil {
 		return fmt.Errorf("store: set data %s.%s: %w", sessionID, key, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit transaction: %w", err)
+	}
+	return nil
+}
+
+func RemoveEntry(path, sessionID, key string) error {
+	return NewSQLite(path).RemoveEntry(context.Background(), sessionID, key)
+}
+
+func (s *SQLite) RemoveEntry(ctx context.Context, sessionID, key string) error {
+	return retryBusy(ctx, func() error {
+		return s.removeEntry(ctx, sessionID, key)
+	})
+}
+
+func (s *SQLite) removeEntry(ctx context.Context, sessionID, key string) error {
+	db, err := initDB(ctx, s.path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin transaction: %w", err)
+	}
+	defer rollback(tx)
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = ?`, sessionID).Scan(&exists); err != nil {
+		return fmt.Errorf("store: check session %s: %w", sessionID, err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM session_data WHERE session_id = ? AND key = ?`, sessionID, key)
+	if err != nil {
+		return fmt.Errorf("store: remove data %s.%s: %w", sessionID, key, err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: inspect removed data %s.%s: %w", sessionID, key, err)
+	}
+	if removed == 0 {
+		return fmt.Errorf("entry %s not found in session %s", key, sessionID)
 	}
 
 	if err := tx.Commit(); err != nil {

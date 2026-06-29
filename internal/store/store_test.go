@@ -164,6 +164,82 @@ func TestSetEntryStoresValueType(t *testing.T) {
 	}
 }
 
+func TestRemoveEntryDeletesSessionKey(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_remove_entry.db")
+
+	if err := CreateSession(dsn, "s1", nil); err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	if err := SetValue(dsn, "s1", "KEEP", "yes"); err != nil {
+		t.Fatalf("SetValue KEEP error: %v", err)
+	}
+	if err := SetValue(dsn, "s1", "DROP", "no"); err != nil {
+		t.Fatalf("SetValue DROP error: %v", err)
+	}
+
+	if err := RemoveEntry(dsn, "s1", "DROP"); err != nil {
+		t.Fatalf("RemoveEntry error: %v", err)
+	}
+
+	if _, err := GetValue(dsn, "s1", "DROP"); err == nil {
+		t.Fatal("expected removed key lookup to fail")
+	}
+	got, err := GetValue(dsn, "s1", "KEEP")
+	if err != nil {
+		t.Fatalf("GetValue KEEP error: %v", err)
+	}
+	if got != "yes" {
+		t.Fatalf("KEEP = %q, want yes", got)
+	}
+}
+
+func TestRemoveEntryDoesNotRemoveAncestorKey(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_remove_entry_ancestor.db")
+
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	parent := "root"
+	if err := CreateSession(dsn, "child", &parent); err != nil {
+		t.Fatalf("CreateSession child error: %v", err)
+	}
+	if err := SetValue(dsn, "root", "KEY", "root-value"); err != nil {
+		t.Fatalf("SetValue root error: %v", err)
+	}
+	if err := SetValue(dsn, "child", "KEY", "child-value"); err != nil {
+		t.Fatalf("SetValue child error: %v", err)
+	}
+
+	if err := RemoveEntry(dsn, "child", "KEY"); err != nil {
+		t.Fatalf("RemoveEntry error: %v", err)
+	}
+
+	got, err := GetValue(dsn, "child", "KEY")
+	if err != nil {
+		t.Fatalf("GetValue child error: %v", err)
+	}
+	if got != "root-value" {
+		t.Fatalf("KEY = %q, want inherited root-value", got)
+	}
+}
+
+func TestRemoveEntryErrorsWhenMissing(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_remove_entry_missing.db")
+
+	if err := CreateSession(dsn, "s1", nil); err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	if err := RemoveEntry(dsn, "s1", "MISSING"); err == nil {
+		t.Fatal("expected missing entry error")
+	}
+	if err := RemoveEntry(dsn, "missing-session", "MISSING"); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
 func TestGetValueReadsNearestAncestor(t *testing.T) {
 	tmp := t.TempDir()
 	dsn := filepath.Join(tmp, "test_get_value.db")
