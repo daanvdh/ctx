@@ -327,11 +327,18 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	commandParts := strings.Fields(def.Command)
+	commandParts, err := splitCommandLine(def.Command)
+	if err != nil {
+		return fmt.Errorf("invalid command in template: %w", err)
+	}
 	if len(commandParts) == 0 {
 		return fmt.Errorf("empty command in template")
 	}
-	execCmd := exec.CommandContext(ctx, commandParts[0], append(commandParts[1:], renderedPrompt)...)
+	args := commandParts[1:]
+	if renderedPrompt != "" {
+		args = append(args, renderedPrompt)
+	}
+	execCmd := exec.CommandContext(ctx, commandParts[0], args...)
 	execCmd.Stdout = a.stdout
 	execCmd.Stderr = a.stderr
 	if err := execCmd.Run(); err != nil {

@@ -156,14 +156,13 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if len(parts) != 2 {
 		parts = strings.SplitN(content, "---", 2)
 	}
-	if len(parts) != 2 {
-		return TriggerDefinition{}, fmt.Errorf("malformed template %s: missing '---' separator", path)
-	}
 
 	def := TriggerDefinition{
-		Name:           strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
-		Path:           path,
-		PromptTemplate: parts[1],
+		Name: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+		Path: path,
+	}
+	if len(parts) == 2 {
+		def.PromptTemplate = parts[1]
 	}
 	for _, line := range strings.Split(parts[0], "\n") {
 		line = strings.TrimSpace(stripComment(line))
@@ -265,11 +264,18 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		})
 	}
 
-	commandParts := strings.Fields(def.Command)
+	commandParts, err := splitCommandLine(def.Command)
+	if err != nil {
+		return fmt.Errorf("trigger %s has invalid command: %w", def.Path, err)
+	}
 	if len(commandParts) == 0 {
 		return fmt.Errorf("trigger %s has empty command", def.Path)
 	}
-	cmd := exec.CommandContext(ctx, commandParts[0], append(commandParts[1:], renderedPrompt)...)
+	args := commandParts[1:]
+	if renderedPrompt != "" {
+		args = append(args, renderedPrompt)
+	}
+	cmd := exec.CommandContext(ctx, commandParts[0], args...)
 	cmd.Env = append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -299,6 +305,57 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		Stderr:           stderr.String(),
 		Error:            errText,
 	})
+}
+
+// splitCommandLine splits a command string into argv-style parts while preserving quoted arguments.
+func splitCommandLine(command string) ([]string, error) {
+	var parts []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaping := false
+	hasPart := false
+
+	for _, r := range command {
+		if escaping {
+			current.WriteRune(r)
+			escaping = false
+			hasPart = true
+			continue
+		}
+
+		switch {
+		case r == '\\' && !inSingle:
+			escaping = true
+			hasPart = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+			hasPart = true
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+			hasPart = true
+		case (r == ' ' || r == '\t' || r == '\n' || r == '\r') && !inSingle && !inDouble:
+			if hasPart {
+				parts = append(parts, current.String())
+				current.Reset()
+				hasPart = false
+			}
+		default:
+			current.WriteRune(r)
+			hasPart = true
+		}
+	}
+
+	if escaping {
+		return nil, fmt.Errorf("unterminated escape")
+	}
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	if hasPart {
+		parts = append(parts, current.String())
+	}
+	return parts, nil
 }
 
 func (a *App) executionSession(ctx context.Context, def TriggerDefinition, change TriggerChange) (string, error) {
