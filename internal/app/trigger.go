@@ -61,12 +61,12 @@ type triggerEntryValue struct {
 
 // triggerFileData is the YAML structure for the trigger frontmatter.
 type triggerFileData struct {
-	Command          string                          `yaml:"command"`
-	Session          string                          `yaml:"session"`
-	AnyChange        bool                            `yaml:"any-change"`
-	Order            int                             `yaml:"order"`
-	ExecutionSession string                          `yaml:"execution-session"`
-	Entries          map[string][]triggerEntryValue  `yaml:"entries"`
+	Command          string                         `yaml:"command"`
+	Session          string                         `yaml:"session"`
+	AnyChange        bool                           `yaml:"any-change"`
+	Order            int                            `yaml:"order"`
+	ExecutionSession string                         `yaml:"execution-session"`
+	Entries          map[string][]triggerEntryValue `yaml:"entries"`
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
