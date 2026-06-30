@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -332,26 +331,8 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	renderedCommand, err := render.TemplateString(def.Command, vars)
-	if err != nil {
-		return err
-	}
-
-	commandParts, err := splitCommandLine(renderedCommand)
-	if err != nil {
-		return fmt.Errorf("invalid command in template: %w", err)
-	}
-	if len(commandParts) == 0 {
-		return fmt.Errorf("empty command in template")
-	}
-	args := commandParts[1:]
-	if renderedPrompt != "" {
-		args = append(args, renderedPrompt)
-	}
-	execCmd := exec.CommandContext(ctx, commandParts[0], args...)
-	execCmd.Stdout = a.stdout
-	execCmd.Stderr = a.stderr
-	if err := execCmd.Run(); err != nil {
+	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+sessionID)
+	if _, err := runCommandLines(ctx, a, def.Command, renderedPrompt, vars, sessionID, env, a.stdout, a.stderr); err != nil {
 		return fmt.Errorf("command execution failed: %w", err)
 	}
 	return nil

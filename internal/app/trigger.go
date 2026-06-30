@@ -6,18 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"ctx/internal/config"
 	"ctx/internal/render"
+	"ctx/internal/session"
+	"gopkg.in/yaml.v3"
 )
 
 type TriggerChange struct {
@@ -27,12 +28,12 @@ type TriggerChange struct {
 	NewValue  string
 }
 
+// TriggerDefinition holds a parsed trigger file.
 type TriggerDefinition struct {
 	Name             string
 	Path             string
-	TriggerSession   string
-	Key              string
-	Match            string
+	Session          string
+	Entries          map[string][]string // key -> accepted values; nil/empty slice = wildcard
 	AnyChange        bool
 	Order            int
 	ExecutionSession string
@@ -53,14 +54,35 @@ type triggerLog struct {
 	Error            string `json:"error,omitempty"`
 }
 
+// triggerEntryValue is a single accepted value within an entries list.
+type triggerEntryValue struct {
+	Value string `yaml:"value"`
+}
+
+// triggerFileData is the YAML structure for the trigger frontmatter.
+type triggerFileData struct {
+	Command          string                          `yaml:"command"`
+	Session          string                          `yaml:"session"`
+	AnyChange        bool                            `yaml:"any-change"`
+	Order            int                             `yaml:"order"`
+	ExecutionSession string                          `yaml:"execution-session"`
+	Entries          map[string][]triggerEntryValue  `yaml:"entries"`
+}
+
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
 	defs, err := loadTriggerDefinitions()
 	if err != nil {
 		return err
 	}
+
+	vars, err := a.store.Resolve(ctx, change.SessionID)
+	if err != nil {
+		return err
+	}
+
 	matching := []TriggerDefinition{}
 	for _, def := range defs {
-		matches, err := def.Matches(change)
+		matches, err := def.Matches(change, vars)
 		if err != nil {
 			return err
 		}
@@ -152,93 +174,93 @@ func loadTriggerDefinitions() ([]TriggerDefinition, error) {
 }
 
 func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
-	parts := strings.SplitN(content, "\n---\n", 2)
-	if len(parts) != 2 {
-		parts = strings.SplitN(content, "---", 2)
+	var frontmatter, promptTemplate string
+	if i := strings.Index(content, "\n---\n"); i >= 0 {
+		frontmatter = content[:i]
+		promptTemplate = content[i+5:]
+	} else {
+		frontmatter = content
 	}
 
-	def := TriggerDefinition{
-		Name: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
-		Path: path,
+	var data triggerFileData
+	dec := yaml.NewDecoder(strings.NewReader(frontmatter))
+	dec.KnownFields(true)
+	if err := dec.Decode(&data); err != nil && err != io.EOF {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: %w", path, err)
 	}
-	if len(parts) == 2 {
-		def.PromptTemplate = parts[1]
-	}
-	for _, line := range strings.Split(parts[0], "\n") {
-		line = strings.TrimSpace(stripComment(line))
-		if line == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: invalid frontmatter line %q", path, line)
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		switch key {
-		case "session", "trigger-session":
-			def.TriggerSession = value
-		case "key":
-			def.Key = value
-		case "match":
-			def.Match = value
-		case "any-change":
-			parsed, err := strconv.ParseBool(value)
-			if err != nil {
-				return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change must be true or false", path)
-			}
-			def.AnyChange = parsed
-		case "order":
-			parsed, err := strconv.Atoi(value)
-			if err != nil {
-				return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: order must be an integer", path)
-			}
-			def.Order = parsed
-		case "execution-session":
-			def.ExecutionSession = value
-		case "command":
-			def.Command = value
-		default:
-			return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: unknown field %q", path, key)
-		}
-	}
-	if def.Command == "" {
+
+	if data.Command == "" {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: missing command", path)
 	}
-	if def.AnyChange && (def.TriggerSession != "" || def.Key != "" || def.Match != "") {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with session, key, or match", path)
+	if data.AnyChange && (data.Session != "" || len(data.Entries) > 0) {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with session or entries", path)
 	}
-	return def, nil
+
+	entries := make(map[string][]string, len(data.Entries))
+	for key, vals := range data.Entries {
+		values := make([]string, 0, len(vals))
+		for _, v := range vals {
+			values = append(values, v.Value)
+		}
+		entries[key] = values
+	}
+
+	return TriggerDefinition{
+		Name:             strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+		Path:             path,
+		Session:          data.Session,
+		Entries:          entries,
+		AnyChange:        data.AnyChange,
+		Order:            data.Order,
+		ExecutionSession: data.ExecutionSession,
+		Command:          data.Command,
+		PromptTemplate:   promptTemplate,
+	}, nil
 }
 
-func stripComment(line string) string {
-	if i := strings.Index(line, "#"); i != -1 {
-		return line[:i]
-	}
-	return line
-}
-
-func (d TriggerDefinition) Matches(change TriggerChange) (bool, error) {
+// Matches reports whether this trigger should fire for the given change.
+// vars contains the fully resolved current values for the triggering session.
+func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string) (bool, error) {
 	if d.AnyChange {
 		return true, nil
 	}
-	if d.TriggerSession == "" && d.Key == "" && d.Match == "" {
+	if d.Session == "" && len(d.Entries) == 0 {
+		return false, nil // manual only
+	}
+	if d.Session != "" && d.Session != change.SessionID {
 		return false, nil
 	}
-	if d.TriggerSession != "" && d.TriggerSession != change.SessionID {
+	if len(d.Entries) == 0 {
+		return true, nil // session matched, no entry filter
+	}
+
+	// The changed key must be one of our entry keys.
+	if _, ok := d.Entries[change.Key]; !ok {
 		return false, nil
 	}
-	if d.Key != "" && d.Key != change.Key {
-		return false, nil
+
+	// All entries must have a matching current value (wildcard if no values specified).
+	for key, values := range d.Entries {
+		if len(values) == 0 {
+			continue // wildcard: any value matches
+		}
+		currentValue := vars[key]
+		if key == change.Key {
+			currentValue = change.NewValue
+		}
+		matched := false
+		for _, v := range values {
+			if currentValue == v {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, nil
+		}
 	}
-	if d.Match == "" {
-		return true, nil
-	}
-	re, err := regexp.Compile(d.Match)
-	if err != nil {
-		return false, fmt.Errorf("trigger %s has invalid match regex: %w", d.Path, err)
-	}
-	return re.MatchString(change.NewValue) && !re.MatchString(change.OldValue), nil
+
+	return true, nil
 }
 
 func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change TriggerChange) error {
@@ -264,47 +286,13 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		})
 	}
 
-	renderedCommand, err := render.TemplateString(def.Command, vars)
-	if err != nil {
-		return a.writeTriggerLog(ctx, change, triggerLog{
-			Trigger:          def.Name,
-			SessionID:        change.SessionID,
-			Key:              change.Key,
-			OldValue:         change.OldValue,
-			NewValue:         change.NewValue,
-			ExecutionSession: executionSession,
-			ExitCode:         -1,
-			Error:            err.Error(),
-		})
-	}
+	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
+	var outBuf, errBuf bytes.Buffer
+	exitCode, runErr := runCommandLines(ctx, a, def.Command, renderedPrompt, vars, executionSession, env, &outBuf, &errBuf)
 
-	commandParts, err := splitCommandLine(renderedCommand)
-	if err != nil {
-		return fmt.Errorf("trigger %s has invalid command: %w", def.Path, err)
-	}
-	if len(commandParts) == 0 {
-		return fmt.Errorf("trigger %s has empty command", def.Path)
-	}
-	args := commandParts[1:]
-	if renderedPrompt != "" {
-		args = append(args, renderedPrompt)
-	}
-	cmd := exec.CommandContext(ctx, commandParts[0], args...)
-	cmd.Env = append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-
-	exitCode := 0
-	var errText string
+	errText := ""
 	if runErr != nil {
 		errText = runErr.Error()
-		exitCode = 1
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		}
 	}
 
 	return a.writeTriggerLog(ctx, change, triggerLog{
@@ -315,10 +303,105 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		NewValue:         change.NewValue,
 		ExecutionSession: executionSession,
 		ExitCode:         exitCode,
-		Stdout:           stdout.String(),
-		Stderr:           stderr.String(),
+		Stdout:           outBuf.String(),
+		Stderr:           errBuf.String(),
 		Error:            errText,
 	})
+}
+
+// runCommandLines executes a command string that may contain multiple lines.
+// Each non-empty line is executed in isolation as a separate subprocess.
+// Lines matching KEY=value (uppercase-starting key, no spaces before =) are
+// stored in the ctx session and made available to subsequent lines via vars.
+// The rendered prompt (if non-empty) is appended as the last argument to the
+// last non-assignment command line.
+// Output is written to stdout and stderr writers.
+func runCommandLines(ctx context.Context, a *App, command, prompt string, vars map[string]string, sessionID string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
+	localVars := make(map[string]string, len(vars))
+	for k, v := range vars {
+		localVars[k] = v
+	}
+
+	lines := commandLines(command)
+	for i, rawLine := range lines {
+		renderedLine, err := render.TemplateString(rawLine, localVars)
+		if err != nil {
+			return -1, err
+		}
+		renderedLine = strings.TrimSpace(renderedLine)
+		if renderedLine == "" {
+			continue
+		}
+
+		if key, value, ok := parseAssignment(renderedLine); ok {
+			if err := a.store.SetValue(ctx, sessionID, key, value); err != nil {
+				return -1, err
+			}
+			localVars[key] = value
+			continue
+		}
+
+		cmdParts, err := splitCommandLine(renderedLine)
+		if err != nil {
+			return -1, fmt.Errorf("invalid command: %w", err)
+		}
+		if len(cmdParts) == 0 {
+			continue
+		}
+
+		args := cmdParts[1:]
+		if prompt != "" && i == len(lines)-1 {
+			args = append(args, prompt)
+		}
+
+		cmd := exec.CommandContext(ctx, cmdParts[0], args...)
+		cmd.Env = env
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
+		if runErr := cmd.Run(); runErr != nil {
+			code := 1
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				code = exitErr.ExitCode()
+			}
+			return code, runErr
+		}
+	}
+
+	return 0, nil
+}
+
+// commandLines splits a command string into individual non-empty lines,
+// trimming whitespace and trailing semicolons from each line.
+func commandLines(command string) []string {
+	var lines []string
+	for _, line := range strings.Split(command, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, ";")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// parseAssignment detects a KEY=value assignment where KEY is a valid ctx key
+// that starts with a letter or underscore and contains no whitespace before =.
+// This distinguishes assignments from commands that happen to contain =.
+func parseAssignment(line string) (key, value string, ok bool) {
+	idx := strings.IndexByte(line, '=')
+	if idx <= 0 {
+		return "", "", false
+	}
+	k := line[:idx]
+	if strings.ContainsAny(k, " \t") {
+		return "", "", false
+	}
+	if !session.ValidShellKey(k) {
+		return "", "", false
+	}
+	return k, line[idx+1:], true
 }
 
 // splitCommandLine splits a command string into argv-style parts while preserving quoted arguments.

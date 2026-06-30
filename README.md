@@ -226,23 +226,51 @@ ctx get $CHILD REPORT --path           # prints /tmp/report.txt
 
 ## Trigger Templates
 
-Manual templates and automatic triggers use files in the trigger directory:
+Manual templates and automatic triggers use YAML files in the trigger directory. The frontmatter (before the optional `---` separator) is YAML; everything after `---` is the prompt template.
 
-```text
-trigger-session=Issue-1
-key=status
-match=PR_CREATED
-order=0
-command=pi
+```yaml
+session: Issue-1
+order: 0
+command: pi
+entries:
+  status:
+    - value: PR_CREATED
 ---
 Analyse and comment on PR $PR_NUMBER:
 
 $STORY
 ```
 
-`command` is required. `trigger-session`, `key`, and `match` are optional matchers and are combined with logical AND. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change=true` to fire on every `ctx` write; it cannot be combined with other matchers.
+`command` is required. `session` and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
 
-When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session=<session>` to run the command with a specific existing session instead.
+**`entries` matching** – each key in `entries` can have zero or more `value` items:
+- Zero values: wildcard — any write to that key fires the trigger.
+- One value: the key's current value must equal it.
+- Multiple values: logical OR — the current value must equal at least one.
+
+When multiple keys are listed, the trigger fires only when **all** entries satisfy their condition AND the key that was just written is one of the listed entry keys.
+
+```yaml
+entries:
+  STATUS:
+    - value: DONE
+    - value: CANCELLED
+  PRIORITY:             # wildcard — any priority is fine
+---
+```
+
+**Multi-line commands** – use a YAML block literal (`|`) to run several commands in sequence. Each non-empty line is executed as a separate subprocess. A line matching `KEY=value` (with a valid ctx key before `=`) stores the variable in the ctx session and makes it available via `$KEY` in subsequent lines.
+
+```yaml
+command: |
+  git checkout main
+  git pull
+  pi
+---
+Summarise recent changes for $PROJECT.
+```
+
+When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session: <session>` to run the command with a specific existing session instead.
 
 ## `ctx tree` output example
 
