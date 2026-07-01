@@ -27,24 +27,21 @@ go install github.com/daanvdh/ctx@latest
 
 ## Configuration
 
-- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`. This location can be changed by creating a JSON settings file (`$HOME/.config/ctx/settings.json`) with a `db_path` field, for example:
-  ```json
-  {
-    "db_path": "/tmp/my‑ctx.db"
-  }
+- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`. This location can be changed by creating a YAML settings file (`$HOME/.config/ctx/settings.yml`) with a `db_path` field, for example:
+  ```yaml
+  db_path: /tmp/my‑ctx.db
   ```
-- Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.json` to use a different directory.
-- HTTP MCP defaults and authentication can also be configured in `settings.json`:
-  ```json
-  {
-    "mcp_http_addr": "127.0.0.1:7331",
-    "mcp_http_path": "/ctx-mcp",
-    "mcp_server_name": "ctx",
-    "mcp_oauth_client_id": "claude",
-    "mcp_oauth_client_secret": "long-random-secret"
-  }
+- Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.yml` to use a different directory.
+- HTTP MCP defaults and authentication can also be configured in `settings.yml`:
+  ```yaml
+  mcp_http_addr: 127.0.0.1:7331
+  mcp_http_path: /ctx-mcp
+  mcp_server_name: ctx
+  mcp_oauth_client_id: claude
+  mcp_oauth_client_secret: long-random-secret
   ```
   Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
+  If you have a settings file from before `ctx` switched to YAML, `ctx` migrates `settings.json` to `settings.yml` automatically the next time it runs.
 
 ## Core Commands
 
@@ -141,7 +138,7 @@ issues opaque bearer tokens after an authorization-code flow with S256 PKCE and
 then requires `Authorization: Bearer <token>` on MCP requests.
 
 For simple clients that can send bearer tokens directly, set `mcp_token` in
-`settings.json` or `CTX_MCP_TOKEN` in the environment. OAuth credentials can also
+`settings.yml` or `CTX_MCP_TOKEN` in the environment. OAuth credentials can also
 be provided with `CTX_MCP_CLIENT_ID` and `CTX_MCP_CLIENT_SECRET`; environment
 values override settings.
 
@@ -171,7 +168,7 @@ Available tools:
 | `ctx_execute` | Execute a trigger template from the ctx trigger directory. |
 
 The server uses the same settings and SQLite database as the CLI, so `db_path`
-and `trigger_location` in `$HOME/.config/ctx/settings.json` apply to both.
+and `trigger_location` in `$HOME/.config/ctx/settings.yml` apply to both.
 
 ## Using `CTX_ID`
 

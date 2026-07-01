@@ -5,21 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Settings struct {
-	DBPath               string   `json:"db_path"`
-	TriggerLocation      string   `json:"trigger_location"`
-	MCPHTTPAddr          string   `json:"mcp_http_addr"`
-	MCPHTTPPath          string   `json:"mcp_http_path"`
-	MCPServerName        string   `json:"mcp_server_name"`
-	MCPAllowedOrigins    []string `json:"mcp_allowed_origins"`
-	MCPToken             string   `json:"mcp_token"`
-	MCPOAuthClientID     string   `json:"mcp_oauth_client_id"`
-	MCPOAuthClientSecret string   `json:"mcp_oauth_client_secret"`
-	MCPPublicURL         string   `json:"mcp_public_url"`
+	DBPath               string   `yaml:"db_path" json:"db_path"`
+	TriggerLocation      string   `yaml:"trigger_location" json:"trigger_location"`
+	MCPHTTPAddr          string   `yaml:"mcp_http_addr" json:"mcp_http_addr"`
+	MCPHTTPPath          string   `yaml:"mcp_http_path" json:"mcp_http_path"`
+	MCPServerName        string   `yaml:"mcp_server_name" json:"mcp_server_name"`
+	MCPAllowedOrigins    []string `yaml:"mcp_allowed_origins" json:"mcp_allowed_origins"`
+	MCPToken             string   `yaml:"mcp_token" json:"mcp_token"`
+	MCPOAuthClientID     string   `yaml:"mcp_oauth_client_id" json:"mcp_oauth_client_id"`
+	MCPOAuthClientSecret string   `yaml:"mcp_oauth_client_secret" json:"mcp_oauth_client_secret"`
+	MCPPublicURL         string   `yaml:"mcp_public_url" json:"mcp_public_url"`
 }
 
 func Dir() (string, error) {
@@ -86,25 +86,55 @@ func loadSettings() (Settings, string, error) {
 	if err != nil {
 		return Settings{}, "", err
 	}
-	settingsPath := filepath.Join(cfgDir, "settings.json")
+	settingsPath := filepath.Join(cfgDir, "settings.yml")
 	var settings Settings
 
 	if data, err := os.ReadFile(settingsPath); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return Settings{}, "", fmt.Errorf("failed to parse settings file %s: %s", settingsPath, settingsParseError(data, err))
+		if err := yaml.Unmarshal(data, &settings); err != nil {
+			return Settings{}, "", fmt.Errorf("failed to parse settings file %s: %w", settingsPath, err)
 		}
+		return settings, cfgDir, nil
 	} else if !os.IsNotExist(err) {
 		return Settings{}, "", fmt.Errorf("failed to read settings file %s: %w", settingsPath, err)
+	}
+
+	settings, migrated, err := migrateLegacySettings(cfgDir)
+	if err != nil {
+		return Settings{}, "", err
+	}
+	if migrated {
+		if err := writeSettings(cfgDir, settings); err != nil {
+			return Settings{}, "", err
+		}
 	}
 
 	return settings, cfgDir, nil
 }
 
-func writeSettings(cfgDir string, settings Settings) error {
-	settingsPath := filepath.Join(cfgDir, "settings.json")
-	data, err := json.MarshalIndent(settings, "", "  ")
+// migrateLegacySettings reads a pre-existing settings.json file (from before ctx switched to
+// YAML) so upgrading users keep their configuration instead of silently losing it.
+func migrateLegacySettings(cfgDir string) (Settings, bool, error) {
+	legacyPath := filepath.Join(cfgDir, "settings.json")
+	data, err := os.ReadFile(legacyPath)
 	if err != nil {
-		return fmt.Errorf("failed to encode default settings: %w", err)
+		if os.IsNotExist(err) {
+			return Settings{}, false, nil
+		}
+		return Settings{}, false, fmt.Errorf("failed to read legacy settings file %s: %w", legacyPath, err)
+	}
+
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return Settings{}, false, fmt.Errorf("failed to parse legacy settings file %s: %w", legacyPath, err)
+	}
+	return settings, true, nil
+}
+
+func writeSettings(cfgDir string, settings Settings) error {
+	settingsPath := filepath.Join(cfgDir, "settings.yml")
+	data, err := yaml.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("failed to encode settings: %w", err)
 	}
 	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write settings file %s: %w", settingsPath, err)
@@ -118,84 +148,4 @@ func TriggerPath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(triggerDir, name), nil
-}
-
-func settingsParseError(data []byte, err error) string {
-	syntaxErr, ok := err.(*json.SyntaxError)
-	if !ok {
-		return err.Error()
-	}
-
-	line, col := lineColumn(data, syntaxErr.Offset)
-	key := nearbyJSONKey(data, syntaxErr.Offset)
-	msg := fmt.Sprintf("%s at line %d, column %d", err.Error(), line, col)
-	if key != "" {
-		msg += fmt.Sprintf(" near setting %q", key)
-	}
-	if strings.Contains(err.Error(), "after object key:value pair") {
-		msg += "; check the previous setting for a missing comma"
-	}
-	return msg
-}
-
-func lineColumn(data []byte, offset int64) (int, int) {
-	if offset < 1 {
-		offset = 1
-	}
-	if offset > int64(len(data)) {
-		offset = int64(len(data))
-	}
-	line, col := 1, 1
-	for i := int64(0); i < offset-1; i++ {
-		if data[i] == '\n' {
-			line++
-			col = 1
-			continue
-		}
-		col++
-	}
-	return line, col
-}
-
-func nearbyJSONKey(data []byte, offset int64) string {
-	if offset < 1 {
-		offset = 1
-	}
-	if offset > int64(len(data)) {
-		offset = int64(len(data))
-	}
-	start := int(offset) - 1
-	for start > 0 && data[start] != '\n' && data[start] != '{' && data[start] != ',' {
-		start--
-	}
-	fragment := string(data[start:int(offset)])
-	if key := firstQuotedString(fragment); key != "" {
-		return key
-	}
-
-	end := int(offset)
-	for end < len(data) && data[end] != '\n' && data[end] != '}' && data[end] != ',' {
-		end++
-	}
-	fragment = string(data[int(offset)-1 : end])
-	return firstQuotedString(fragment)
-}
-
-func firstQuotedString(s string) string {
-	start := strings.IndexByte(s, '"')
-	if start == -1 {
-		return ""
-	}
-	end := start + 1
-	for end < len(s) {
-		if s[end] == '"' && s[end-1] != '\\' {
-			value, err := strconv.Unquote(s[start : end+1])
-			if err == nil {
-				return value
-			}
-			return ""
-		}
-		end++
-	}
-	return ""
 }
