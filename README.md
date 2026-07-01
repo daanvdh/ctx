@@ -41,7 +41,6 @@ go install github.com/daanvdh/ctx@latest
   mcp_oauth_client_secret: long-random-secret
   ```
   Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
-  If you have a settings file from before `ctx` switched to YAML, `ctx` migrates `settings.json` to `settings.yml` automatically the next time it runs.
 
 ## Core Commands
 
