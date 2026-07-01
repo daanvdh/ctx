@@ -265,10 +265,16 @@ func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]a
 	return out, nil
 }
 
-func (a *App) Tree(ctx context.Context, format string) (string, error) {
+func (a *App) Tree(ctx context.Context, format, sessionID string) (string, error) {
 	nodes, err := a.store.SessionNodes(ctx)
 	if err != nil {
 		return "", err
+	}
+	if sessionID != "" {
+		nodes, err = filterTreeNodes(nodes, sessionID)
+		if err != nil {
+			return "", err
+		}
 	}
 	switch format {
 	case "", TreeFormatText:
@@ -282,6 +288,54 @@ func (a *App) Tree(ctx context.Context, format string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported tree format %q", format)
 	}
+}
+
+// filterTreeNodes reduces nodes to the ancestor chain of sessionID (down to
+// the root) plus the full descendant subtree of sessionID, so the resulting
+// forest still renders correctly with render.TreeNodes.
+func filterTreeNodes(nodes []model.SessionNode, sessionID string) ([]model.SessionNode, error) {
+	byID := make(map[string]model.SessionNode, len(nodes))
+	children := make(map[string][]string, len(nodes))
+	for _, node := range nodes {
+		byID[node.ID] = node
+		if node.Parent != nil {
+			children[*node.Parent] = append(children[*node.Parent], node.ID)
+		}
+	}
+
+	if _, ok := byID[sessionID]; !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	keep := make(map[string]bool)
+	for id := sessionID; id != "" && !keep[id]; {
+		keep[id] = true
+		node := byID[id]
+		if node.Parent == nil {
+			break
+		}
+		id = *node.Parent
+	}
+
+	queue := []string{sessionID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		for _, childID := range children[id] {
+			if !keep[childID] {
+				keep[childID] = true
+				queue = append(queue, childID)
+			}
+		}
+	}
+
+	out := make([]model.SessionNode, 0, len(keep))
+	for _, node := range nodes {
+		if keep[node.ID] {
+			out = append(out, node)
+		}
+	}
+	return out, nil
 }
 
 func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
