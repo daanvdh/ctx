@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -190,7 +189,7 @@ func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string,
 	return resolveEntries(entries, "resolve")
 }
 
-func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths bool) ([]string, error) {
+func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths, quiet bool) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -200,7 +199,10 @@ func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAs
 	lines = append(lines, fmt.Sprintf("export CTX_ID=%s", shellSingleQuote(sessionID)))
 	for _, key := range sortedEntryKeys(entries) {
 		if !session.ValidShellKey(key) {
-			return nil, fmt.Errorf("key %s is not a valid shell variable name", key)
+			if !quiet {
+				lines = append(lines, fmt.Sprintf("echo %s", shellSingleQuote(fmt.Sprintf("warning: ctx export: key %s is not a valid shell variable name and is ignored.", key))))
+			}
+			continue
 		}
 		entry := entries[key]
 		switch entry.ValueType {
@@ -263,10 +265,16 @@ func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]a
 	return out, nil
 }
 
-func (a *App) Tree(ctx context.Context, format string) (string, error) {
+func (a *App) Tree(ctx context.Context, format, sessionID string) (string, error) {
 	nodes, err := a.store.SessionNodes(ctx)
 	if err != nil {
 		return "", err
+	}
+	if sessionID != "" {
+		nodes, err = filterTreeNodes(nodes, sessionID)
+		if err != nil {
+			return "", err
+		}
 	}
 	switch format {
 	case "", TreeFormatText:
@@ -280,6 +288,54 @@ func (a *App) Tree(ctx context.Context, format string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported tree format %q", format)
 	}
+}
+
+// filterTreeNodes reduces nodes to the ancestor chain of sessionID (down to
+// the root) plus the full descendant subtree of sessionID, so the resulting
+// forest still renders correctly with render.TreeNodes.
+func filterTreeNodes(nodes []model.SessionNode, sessionID string) ([]model.SessionNode, error) {
+	byID := make(map[string]model.SessionNode, len(nodes))
+	children := make(map[string][]string, len(nodes))
+	for _, node := range nodes {
+		byID[node.ID] = node
+		if node.Parent != nil {
+			children[*node.Parent] = append(children[*node.Parent], node.ID)
+		}
+	}
+
+	if _, ok := byID[sessionID]; !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	keep := make(map[string]bool)
+	for id := sessionID; id != "" && !keep[id]; {
+		keep[id] = true
+		node := byID[id]
+		if node.Parent == nil {
+			break
+		}
+		id = *node.Parent
+	}
+
+	queue := []string{sessionID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		for _, childID := range children[id] {
+			if !keep[childID] {
+				keep[childID] = true
+				queue = append(queue, childID)
+			}
+		}
+	}
+
+	out := make([]model.SessionNode, 0, len(keep))
+	for _, node := range nodes {
+		if keep[node.ID] {
+			out = append(out, node)
+		}
+	}
+	return out, nil
 }
 
 func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
@@ -332,26 +388,8 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	renderedCommand, err := render.TemplateString(def.Command, vars)
-	if err != nil {
-		return err
-	}
-
-	commandParts, err := splitCommandLine(renderedCommand)
-	if err != nil {
-		return fmt.Errorf("invalid command in template: %w", err)
-	}
-	if len(commandParts) == 0 {
-		return fmt.Errorf("empty command in template")
-	}
-	args := commandParts[1:]
-	if renderedPrompt != "" {
-		args = append(args, renderedPrompt)
-	}
-	execCmd := exec.CommandContext(ctx, commandParts[0], args...)
-	execCmd.Stdout = a.stdout
-	execCmd.Stderr = a.stderr
-	if err := execCmd.Run(); err != nil {
+	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+sessionID)
+	if _, err := runCommandLines(ctx, a, def.Command, renderedPrompt, vars, sessionID, env, a.stdout, a.stderr); err != nil {
 		return fmt.Errorf("command execution failed: %w", err)
 	}
 	return nil

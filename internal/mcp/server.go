@@ -608,7 +608,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]any{"lines": lines, "text": strings.Join(lines, "\n"), "entries": entries}
 	case "ctx_export":
-		lines, err := a.Export(ctx, requiredString(args, "session_id"), false, false)
+		lines, err := a.Export(ctx, requiredString(args, "session_id"), false, false, false)
 		if err != nil {
 			return toolError(err), nil
 		}
@@ -620,7 +620,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = ok()
 	case "ctx_tree":
-		text, err := a.Tree(ctx, stringDefault(args, "format", app.TreeFormatText))
+		text, err := a.Tree(ctx, stringDefault(args, "format", app.TreeFormatText), stringDefault(args, "session_id", ""))
 		if err != nil {
 			return toolError(err), nil
 		}

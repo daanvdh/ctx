@@ -30,20 +30,29 @@ func Line(key string, entry model.Entry) string {
 }
 
 // Preview returns the first line of a value, truncated to max characters.
+// Whenever content is cut off, whether because the first line exceeds max
+// characters or because the value has additional lines, " ..." is appended.
 func Preview(value string, max int) string {
 	if max <= 0 {
 		return ""
 	}
-	line, _, _ := strings.Cut(value, "\n")
+	line, rest, hadNewline := strings.Cut(value, "\n")
 	line = strings.TrimSuffix(line, "\r")
 	runes := []rune(line)
-	if len(runes) <= max {
+
+	lineTruncated := len(runes) > max
+	moreLines := hadNewline && rest != ""
+
+	if !lineTruncated {
+		if moreLines {
+			return line + " ..."
+		}
 		return line
 	}
-	if max <= 3 {
+	if max <= 4 {
 		return string(runes[:max])
 	}
-	return string(runes[:max-3]) + "..."
+	return string(runes[:max-4]) + " ..."
 }
 
 // HumanSize formats a byte count for compact display.

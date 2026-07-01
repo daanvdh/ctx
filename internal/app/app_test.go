@@ -130,17 +130,33 @@ func TestCreateSessionUsesInjectedStore(t *testing.T) {
 	}
 }
 
-func TestExportRejectsInvalidShellKey(t *testing.T) {
+func TestExportWarnsOnInvalidShellKey(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"1BAD": "value"}})
-	_, err := a.Export(context.Background(), "s1", false, false)
-	if err == nil {
-		t.Fatal("expected invalid shell key error")
+	lines, err := a.Export(context.Background(), "s1", false, false, false)
+	if err != nil {
+		t.Fatalf("Export error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "echo") || !strings.Contains(got, "1BAD") || !strings.Contains(got, "warning") {
+		t.Fatalf("export = %s, want echo warning for invalid key", got)
+	}
+}
+
+func TestExportQuietSkipsInvalidShellKey(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolved: map[string]string{"1BAD": "value"}})
+	lines, err := a.Export(context.Background(), "s1", false, false, true)
+	if err != nil {
+		t.Fatalf("Export error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "echo") || strings.Contains(got, "1BAD") {
+		t.Fatalf("export = %s, quiet mode should not emit warning or invalid key", got)
 	}
 }
 
 func TestExportIncludesCTXID(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"KEY": "value"}})
-	lines, err := a.Export(context.Background(), "s1", false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -155,7 +171,7 @@ func TestExportOmitsDocsAndFileRefsByDefault(t *testing.T) {
 		"DOC":  model.NewEntry("long text", model.ValueTypeDoc),
 		"SPEC": model.NewEntry("/tmp/spec.yaml", model.ValueTypeFileRef),
 	}})
-	lines, err := a.Export(context.Background(), "s1", false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -173,7 +189,7 @@ func TestExportIncludesDocsAndFilePathsWhenRequested(t *testing.T) {
 		"DOC":  model.NewEntry("don't split", model.ValueTypeDoc),
 		"SPEC": model.NewEntry("/tmp/spec.yaml", model.ValueTypeFileRef),
 	}})
-	lines, err := a.Export(context.Background(), "s1", true, true)
+	lines, err := a.Export(context.Background(), "s1", true, true, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -378,7 +394,7 @@ func TestTriggerTemplatePathFindsExtension(t *testing.T) {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
 	want := filepath.Join(triggerDir, "test.md")
-	if err := os.WriteFile(want, []byte("command=echo\n---\nhello"), 0o644); err != nil {
+	if err := os.WriteFile(want, []byte("command: echo\n---\nhello"), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
 
@@ -392,40 +408,222 @@ func TestTriggerTemplatePathFindsExtension(t *testing.T) {
 }
 
 func TestTriggerDefinitionMatchesTransition(t *testing.T) {
-	def := TriggerDefinition{Key: "STATUS", Match: "DONE"}
-	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "PENDING", NewValue: "DONE"})
+	def := TriggerDefinition{
+		Entries: map[string][]string{
+			"STATUS": {"DONE"},
+		},
+	}
+	vars := map[string]string{"STATUS": "DONE"}
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "PENDING", NewValue: "DONE"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
 	if !matches {
-		t.Fatal("expected transition into matching value to fire")
+		t.Fatal("expected matching entry value to fire")
 	}
+}
 
-	matches, err = def.Matches(TriggerChange{Key: "STATUS", OldValue: "DONE", NewValue: "DONE"})
+func TestTriggerDefinitionDoesNotMatchWrongValue(t *testing.T) {
+	def := TriggerDefinition{
+		Entries: map[string][]string{
+			"STATUS": {"DONE"},
+		},
+	}
+	vars := map[string]string{"STATUS": "PENDING"}
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "TODO", NewValue: "PENDING"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
 	if matches {
-		t.Fatal("expected already-matching value not to fire")
+		t.Fatal("expected non-matching value not to fire")
 	}
 }
 
-func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change=true\nkey=STATUS\ncommand=echo\n---\nhello")
+func TestTriggerDefinitionWildcardEntryMatchesAnyValue(t *testing.T) {
+	def := TriggerDefinition{
+		Entries: map[string][]string{
+			"STATUS": nil, // wildcard
+		},
+	}
+	vars := map[string]string{"STATUS": "anything"}
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "anything"}, vars, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected wildcard entry to match any value")
+	}
+}
+
+func TestTriggerDefinitionMultipleValuesLogicalOr(t *testing.T) {
+	def := TriggerDefinition{
+		Entries: map[string][]string{
+			"STATUS": {"DONE", "CANCELLED"},
+		},
+	}
+	for _, newVal := range []string{"DONE", "CANCELLED"} {
+		vars := map[string]string{"STATUS": newVal}
+		matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: newVal}, vars, nil)
+		if err != nil {
+			t.Fatalf("Matches error: %v", err)
+		}
+		if !matches {
+			t.Fatalf("expected %q to match with OR logic", newVal)
+		}
+	}
+	vars := map[string]string{"STATUS": "PENDING"}
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "PENDING"}, vars, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected non-matching value not to fire")
+	}
+}
+
+func TestTriggerDefinitionMultipleEntriesAllMustMatch(t *testing.T) {
+	def := TriggerDefinition{
+		Entries: map[string][]string{
+			"STATUS":   {"DONE"},
+			"PRIORITY": {"HIGH"},
+		},
+	}
+
+	// Both match: fire
+	vars := map[string]string{"STATUS": "DONE", "PRIORITY": "HIGH"}
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected all-matching entries to fire")
+	}
+
+	// STATUS matches but PRIORITY doesn't: no fire
+	vars = map[string]string{"STATUS": "DONE", "PRIORITY": "LOW"}
+	matches, err = def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected partial entry match not to fire")
+	}
+
+	// Changed key not in entries: no fire
+	vars = map[string]string{"STATUS": "DONE", "PRIORITY": "HIGH"}
+	matches, err = def.Matches(TriggerChange{Key: "OTHER", NewValue: "x"}, vars, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected unrelated key change not to fire")
+	}
+}
+
+func TestTriggerDefinitionMatchesAncestor(t *testing.T) {
+	def := TriggerDefinition{Ancestor: "root"}
+	matches, err := def.Matches(TriggerChange{SessionID: "child"}, nil, map[string]bool{"root": true})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected matching ancestor to fire")
+	}
+}
+
+func TestTriggerDefinitionAncestorMismatchDoesNotFire(t *testing.T) {
+	def := TriggerDefinition{Ancestor: "root"}
+	matches, err := def.Matches(TriggerChange{SessionID: "child"}, nil, map[string]bool{"other": true})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected non-ancestor not to fire")
+	}
+}
+
+func TestTriggerDefinitionAncestorCombinesWithEntries(t *testing.T) {
+	def := TriggerDefinition{
+		Ancestor: "root",
+		Entries: map[string][]string{
+			"STATUS": {"DONE"},
+		},
+	}
+	vars := map[string]string{"STATUS": "DONE"}
+	ancestors := map[string]bool{"root": true}
+
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, ancestors)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected matching ancestor and entry to fire")
+	}
+
+	matches, err = def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, map[string]bool{"other": true})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected non-matching ancestor not to fire despite matching entry")
+	}
+}
+
+func TestParseTriggerAncestor(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "command: echo\nancestor: root\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.Ancestor != "root" {
+		t.Fatalf("Ancestor = %q, want root", def.Ancestor)
+	}
+}
+
+func TestParseTriggerRejectsAnyChangeWithAncestor(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "any-change: true\nancestor: root\ncommand: echo\n---\nhello")
 	if err == nil {
-		t.Fatal("expected any-change with matcher to fail")
+		t.Fatal("expected any-change with ancestor to fail")
+	}
+}
+
+func TestAncestorSetWalksParentChain(t *testing.T) {
+	fake := &fakeStore{nodes: []model.SessionNode{
+		{ID: "root"},
+		{ID: "child", Parent: strPtr("root")},
+		{ID: "grandchild", Parent: strPtr("child")},
+	}}
+	a := NewWithStore(fake)
+
+	got, err := a.ancestorSet(context.Background(), "grandchild")
+	if err != nil {
+		t.Fatalf("ancestorSet error: %v", err)
+	}
+	if !got["root"] || !got["child"] {
+		t.Fatalf("ancestorSet = %v, want root and child", got)
+	}
+	if got["grandchild"] {
+		t.Fatal("ancestorSet should not include the session itself")
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "any-change: true\nentries:\n  STATUS:\ncommand: echo\n---\nhello")
+	if err == nil {
+		t.Fatal("expected any-change with entries to fail")
 	}
 }
 
 func TestParseTriggerRequiresIntegerOrder(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "order=first\ncommand=echo\n---\nhello")
+	_, err := parseTriggerDefinition("test.md", "order: first\ncommand: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected non-integer order to fail")
 	}
 }
 
 func TestTriggerOrderDefaultsToZero(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command=echo\n---\nhello")
+	def, err := parseTriggerDefinition("test.md", "command: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -435,7 +633,7 @@ func TestTriggerOrderDefaultsToZero(t *testing.T) {
 }
 
 func TestParseTriggerExecutionSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "execution-session=worker\ncommand=echo\n---\nhello")
+	def, err := parseTriggerDefinition("test.md", "execution-session: worker\ncommand: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -445,12 +643,58 @@ func TestParseTriggerExecutionSession(t *testing.T) {
 }
 
 func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command=echo\nkey=STATUS")
+	def, err := parseTriggerDefinition("test.md", "command: echo\nentries:\n  STATUS:")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
 	if def.PromptTemplate != "" {
 		t.Fatalf("PromptTemplate = %q, want empty", def.PromptTemplate)
+	}
+}
+
+func TestParseTriggerEntriesWildcard(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "command: echo\nentries:\n  STATUS:\n  NOTE:\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if len(def.Entries) != 2 {
+		t.Fatalf("Entries len = %d, want 2", len(def.Entries))
+	}
+	if len(def.Entries["STATUS"]) != 0 {
+		t.Fatalf("STATUS values = %v, want wildcard (empty)", def.Entries["STATUS"])
+	}
+}
+
+func TestParseTriggerEntriesWithValues(t *testing.T) {
+	content := "command: echo\nentries:\n  STATUS:\n    - value: \"DONE\"\n    - value: \"CANCELLED\"\n"
+	def, err := parseTriggerDefinition("test.md", content)
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if got := def.Entries["STATUS"]; len(got) != 2 || got[0] != "DONE" || got[1] != "CANCELLED" {
+		t.Fatalf("STATUS values = %v, want [DONE CANCELLED]", got)
+	}
+}
+
+func TestParseTriggerSession(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "command: echo\nsession: my-session\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.Session != "my-session" {
+		t.Fatalf("Session = %q, want my-session", def.Session)
+	}
+}
+
+func TestParseTriggerMultilineCommand(t *testing.T) {
+	content := "command: |\n  git pull\n  git status\n"
+	def, err := parseTriggerDefinition("test.md", content)
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	lines := commandLines(def.Command)
+	if len(lines) != 2 || lines[0] != "git pull" || lines[1] != "git status" {
+		t.Fatalf("command lines = %v, want [git pull, git status]", lines)
 	}
 }
 
@@ -461,14 +705,14 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/echo\n---\nStory $STORY"
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/echo\n---\nStory $STORY"
 	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
 
 	fake := &fakeStore{
 		values:   map[string]string{"STATUS": "PENDING"},
-		resolved: map[string]string{"STORY": "ship it"},
+		resolved: map[string]string{"STORY": "ship it", "STATUS": "DONE"},
 	}
 	a := NewWithStore(fake)
 
@@ -507,13 +751,14 @@ func TestSetValueExecutesTriggerWithoutPromptArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/sh " + scriptPath + " " + outPath
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/sh " + scriptPath + " " + outPath
 	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
 
 	fake := &fakeStore{
-		values: map[string]string{"STATUS": "PENDING"},
+		values:   map[string]string{"STATUS": "PENDING"},
+		resolved: map[string]string{"STATUS": "DONE"},
 	}
 	a := NewWithStore(fake)
 
@@ -544,7 +789,7 @@ func TestExecuteRunsTriggerWithoutPromptArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command=/bin/sh " + scriptPath + " " + outPath
+	trigger := "command: /bin/sh " + scriptPath + " " + outPath
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -579,7 +824,7 @@ func TestExecutePreservesQuotedCommandArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command=/bin/sh " + scriptPath + " " + outPath + ` "success 1"`
+	trigger := "command: /bin/sh " + scriptPath + " " + outPath + ` "success 1"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -614,7 +859,7 @@ func TestExecuteRendersCommandPlaceholders(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command=/bin/sh " + scriptPath + " " + outPath + ` "$exe"`
+	trigger := "command: /bin/sh " + scriptPath + " " + outPath + ` "$exe"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -649,12 +894,15 @@ func TestSetValueTriggerPreservesQuotedCommandArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/sh " + scriptPath + " " + outPath + ` "success 1"`
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/sh " + scriptPath + " " + outPath + ` "success 1"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
 
-	fake := &fakeStore{values: map[string]string{"STATUS": "PENDING"}}
+	fake := &fakeStore{
+		values:   map[string]string{"STATUS": "PENDING"},
+		resolved: map[string]string{"STATUS": "DONE"},
+	}
 	a := NewWithStore(fake)
 
 	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
@@ -684,14 +932,14 @@ func TestSetValueTriggerRendersCommandPlaceholders(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "key=STATUS\nmatch=DONE\ncommand=/bin/sh " + scriptPath + " " + outPath + ` "$exe"`
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/sh " + scriptPath + " " + outPath + ` "$exe"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
 
 	fake := &fakeStore{
 		values:   map[string]string{"STATUS": "PENDING"},
-		resolved: map[string]string{"exe": "go test"},
+		resolved: map[string]string{"exe": "go test", "STATUS": "DONE"},
 	}
 	a := NewWithStore(fake)
 
@@ -732,7 +980,7 @@ func TestTriggerUsesExplicitExecutionSession(t *testing.T) {
 
 func TestTreeJSONFormat(t *testing.T) {
 	a := NewWithStore(&fakeStore{nodes: []model.SessionNode{{ID: "root", Data: map[string]string{"K": "V"}}}})
-	got, err := a.Tree(context.Background(), TreeFormatJSON)
+	got, err := a.Tree(context.Background(), TreeFormatJSON, "")
 	if err != nil {
 		t.Fatalf("Tree error: %v", err)
 	}
@@ -741,10 +989,141 @@ func TestTreeJSONFormat(t *testing.T) {
 	}
 }
 
+func treeFilterNodes() []model.SessionNode {
+	return []model.SessionNode{
+		{ID: "root"},
+		{ID: "a", Parent: strPtr("root")},
+		{ID: "b", Parent: strPtr("a")},
+		{ID: "c", Parent: strPtr("b")},
+		{ID: "d", Parent: strPtr("a")},
+		{ID: "root2"},
+	}
+}
+
+func TestTreeWithoutSessionIDShowsEverything(t *testing.T) {
+	a := NewWithStore(&fakeStore{nodes: treeFilterNodes()})
+	got, err := a.Tree(context.Background(), TreeFormatText, "")
+	if err != nil {
+		t.Fatalf("Tree error: %v", err)
+	}
+	for _, id := range []string{"root", "a", "b", "c", "d", "root2"} {
+		if !strings.Contains(got, id) {
+			t.Fatalf("expected full tree to contain %q, got:\n%s", id, got)
+		}
+	}
+}
+
+func TestTreeWithSessionIDShowsAncestorsAndDescendants(t *testing.T) {
+	a := NewWithStore(&fakeStore{nodes: treeFilterNodes()})
+	got, err := a.Tree(context.Background(), TreeFormatText, "b")
+	if err != nil {
+		t.Fatalf("Tree error: %v", err)
+	}
+	for _, id := range []string{"root", "a", "b", "c"} {
+		if !strings.Contains(got, id) {
+			t.Fatalf("expected scoped tree to contain %q, got:\n%s", id, got)
+		}
+	}
+	for _, id := range []string{"d", "root2"} {
+		if strings.Contains(got, id) {
+			t.Fatalf("expected scoped tree to exclude %q, got:\n%s", id, got)
+		}
+	}
+}
+
+func TestTreeWithUnknownSessionIDErrors(t *testing.T) {
+	a := NewWithStore(&fakeStore{nodes: treeFilterNodes()})
+	if _, err := a.Tree(context.Background(), TreeFormatText, "missing"); err == nil {
+		t.Fatal("expected error for unknown session id")
+	}
+}
+
 func TestStoreErrorsPropagate(t *testing.T) {
 	want := errors.New("boom")
 	a := NewWithStore(&fakeStore{err: want})
 	if err := a.SetValue(context.Background(), "s1", "K", "V"); !errors.Is(err, want) {
 		t.Fatalf("SetValue error = %v, want %v", err, want)
+	}
+}
+
+func TestMultilineCommandExecutesAllLines(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	tmp := t.TempDir()
+	// Use two scripts that each write a line to a shared output file.
+	scriptA := filepath.Join(tmp, "a.sh")
+	scriptB := filepath.Join(tmp, "b.sh")
+	outPath := filepath.Join(tmp, "output.txt")
+	if err := os.WriteFile(scriptA, []byte("#!/bin/sh\nprintf 'first\\n' >> \"$1\"\n"), 0o755); err != nil {
+		t.Fatalf("write scriptA: %v", err)
+	}
+	if err := os.WriteFile(scriptB, []byte("#!/bin/sh\nprintf 'second\\n' >> \"$1\"\n"), 0o755); err != nil {
+		t.Fatalf("write scriptB: %v", err)
+	}
+	trigger := "command: |\n  /bin/sh " + scriptA + " " + outPath + "\n  /bin/sh " + scriptB + " " + outPath + "\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "multi.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "multi"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if got := string(data); got != "first\nsecond\n" {
+		t.Fatalf("output = %q, want both lines executed", got)
+	}
+}
+
+func TestMultilineCommandAssignmentStored(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	tmp := t.TempDir()
+	// A script that prints its first arg to an output file.
+	scriptPath := filepath.Join(tmp, "print.sh")
+	outPath := filepath.Join(tmp, "output.txt")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$1\" > \"$2\"\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	// Trigger: assign MSG=hello, then use $MSG as argument to the script.
+	trigger := "command: |\n  MSG=hello\n  /bin/sh " + scriptPath + " $MSG " + outPath + "\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "assign.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "assign"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if got := string(data); got != "hello\n" {
+		t.Fatalf("output = %q, want assignment injected into next command", got)
+	}
+
+	// The assignment should have been stored in the session.
+	if fake.values["MSG"] != "hello" {
+		t.Fatalf("MSG not stored in session, values = %v", fake.values)
 	}
 }
