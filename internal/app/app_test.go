@@ -130,17 +130,33 @@ func TestCreateSessionUsesInjectedStore(t *testing.T) {
 	}
 }
 
-func TestExportRejectsInvalidShellKey(t *testing.T) {
+func TestExportWarnsOnInvalidShellKey(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"1BAD": "value"}})
-	_, err := a.Export(context.Background(), "s1", false, false)
-	if err == nil {
-		t.Fatal("expected invalid shell key error")
+	lines, err := a.Export(context.Background(), "s1", false, false, false)
+	if err != nil {
+		t.Fatalf("Export error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "echo") || !strings.Contains(got, "1BAD") || !strings.Contains(got, "warning") {
+		t.Fatalf("export = %s, want echo warning for invalid key", got)
+	}
+}
+
+func TestExportQuietSkipsInvalidShellKey(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolved: map[string]string{"1BAD": "value"}})
+	lines, err := a.Export(context.Background(), "s1", false, false, true)
+	if err != nil {
+		t.Fatalf("Export error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "echo") || strings.Contains(got, "1BAD") {
+		t.Fatalf("export = %s, quiet mode should not emit warning or invalid key", got)
 	}
 }
 
 func TestExportIncludesCTXID(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"KEY": "value"}})
-	lines, err := a.Export(context.Background(), "s1", false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -155,7 +171,7 @@ func TestExportOmitsDocsAndFileRefsByDefault(t *testing.T) {
 		"DOC":  model.NewEntry("long text", model.ValueTypeDoc),
 		"SPEC": model.NewEntry("/tmp/spec.yaml", model.ValueTypeFileRef),
 	}})
-	lines, err := a.Export(context.Background(), "s1", false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -173,7 +189,7 @@ func TestExportIncludesDocsAndFilePathsWhenRequested(t *testing.T) {
 		"DOC":  model.NewEntry("don't split", model.ValueTypeDoc),
 		"SPEC": model.NewEntry("/tmp/spec.yaml", model.ValueTypeFileRef),
 	}})
-	lines, err := a.Export(context.Background(), "s1", true, true)
+	lines, err := a.Export(context.Background(), "s1", true, true, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}

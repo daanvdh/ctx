@@ -8,6 +8,7 @@ import (
 func Export(ctx context.Context, args []string) error {
 	includeDocs := false
 	filesAsPaths := false
+	quiet := false
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
@@ -15,12 +16,14 @@ func Export(ctx context.Context, args []string) error {
 			includeDocs = true
 		case "--files-as-paths":
 			filesAsPaths = true
+		case "--quiet":
+			quiet = true
 		default:
 			filtered = append(filtered, arg)
 		}
 	}
 	if len(filtered) > 1 {
-		return usage("export", "ctx export [session_id] [--include-docs] [--files-as-paths]")
+		return usage("export", "ctx export [session_id] [--include-docs] [--files-as-paths] [--quiet]")
 	}
 
 	sessionID, err := sessionArg(filtered, len(filtered) == 1)
@@ -32,7 +35,7 @@ func Export(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	lines, err := a.Export(ctx, sessionID, includeDocs, filesAsPaths)
+	lines, err := a.Export(ctx, sessionID, includeDocs, filesAsPaths, quiet)
 	if err != nil {
 		return err
 	}
