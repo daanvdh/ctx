@@ -189,7 +189,7 @@ func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string,
 	return resolveEntries(entries, "resolve")
 }
 
-func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths bool) ([]string, error) {
+func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths, quiet bool) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -199,7 +199,10 @@ func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAs
 	lines = append(lines, fmt.Sprintf("export CTX_ID=%s", shellSingleQuote(sessionID)))
 	for _, key := range sortedEntryKeys(entries) {
 		if !session.ValidShellKey(key) {
-			return nil, fmt.Errorf("key %s is not a valid shell variable name", key)
+			if !quiet {
+				lines = append(lines, fmt.Sprintf("echo %s", shellSingleQuote(fmt.Sprintf("warning: ctx export: key %s is not a valid shell variable name and is ignored.", key))))
+			}
+			continue
 		}
 		entry := entries[key]
 		switch entry.ValueType {
