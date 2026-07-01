@@ -964,12 +964,61 @@ func TestTriggerUsesExplicitExecutionSession(t *testing.T) {
 
 func TestTreeJSONFormat(t *testing.T) {
 	a := NewWithStore(&fakeStore{nodes: []model.SessionNode{{ID: "root", Data: map[string]string{"K": "V"}}}})
-	got, err := a.Tree(context.Background(), TreeFormatJSON)
+	got, err := a.Tree(context.Background(), TreeFormatJSON, "")
 	if err != nil {
 		t.Fatalf("Tree error: %v", err)
 	}
 	if !strings.Contains(got, `"id": "root"`) {
 		t.Fatalf("json tree output = %s", got)
+	}
+}
+
+func treeFilterNodes() []model.SessionNode {
+	return []model.SessionNode{
+		{ID: "root"},
+		{ID: "a", Parent: strPtr("root")},
+		{ID: "b", Parent: strPtr("a")},
+		{ID: "c", Parent: strPtr("b")},
+		{ID: "d", Parent: strPtr("a")},
+		{ID: "root2"},
+	}
+}
+
+func TestTreeWithoutSessionIDShowsEverything(t *testing.T) {
+	a := NewWithStore(&fakeStore{nodes: treeFilterNodes()})
+	got, err := a.Tree(context.Background(), TreeFormatText, "")
+	if err != nil {
+		t.Fatalf("Tree error: %v", err)
+	}
+	for _, id := range []string{"root", "a", "b", "c", "d", "root2"} {
+		if !strings.Contains(got, id) {
+			t.Fatalf("expected full tree to contain %q, got:\n%s", id, got)
+		}
+	}
+}
+
+func TestTreeWithSessionIDShowsAncestorsAndDescendants(t *testing.T) {
+	a := NewWithStore(&fakeStore{nodes: treeFilterNodes()})
+	got, err := a.Tree(context.Background(), TreeFormatText, "b")
+	if err != nil {
+		t.Fatalf("Tree error: %v", err)
+	}
+	for _, id := range []string{"root", "a", "b", "c"} {
+		if !strings.Contains(got, id) {
+			t.Fatalf("expected scoped tree to contain %q, got:\n%s", id, got)
+		}
+	}
+	for _, id := range []string{"d", "root2"} {
+		if strings.Contains(got, id) {
+			t.Fatalf("expected scoped tree to exclude %q, got:\n%s", id, got)
+		}
+	}
+}
+
+func TestTreeWithUnknownSessionIDErrors(t *testing.T) {
+	a := NewWithStore(&fakeStore{nodes: treeFilterNodes()})
+	if _, err := a.Tree(context.Background(), TreeFormatText, "missing"); err == nil {
+		t.Fatal("expected error for unknown session id")
 	}
 }
 

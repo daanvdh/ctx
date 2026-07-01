@@ -30,8 +30,9 @@ func tools() []map[string]any {
 			"from_session_id": stringSchema("Session whose context should be shared."),
 			"to_session_id":   stringSchema("Session that should see the shared context."),
 		}, []string{"from_session_id", "to_session_id"}),
-		tool("ctx_tree", "Render the complete session hierarchy.", map[string]any{
-			"format": enumSchema("Output format.", []string{"text", "json"}),
+		tool("ctx_tree", "Render the session hierarchy. If session_id is omitted, renders the complete tree.", map[string]any{
+			"format":     enumSchema("Output format.", []string{"text", "json"}),
+			"session_id": stringSchema("Optional session id; scopes the tree to this session's ancestors and descendants."),
 		}, []string{}),
 		tool("ctx_render", "Render a stored template key by substituting $VAR placeholders from visible context.", map[string]any{
 			"session_id":     stringSchema("Session id."),
