@@ -398,7 +398,7 @@ func TestTriggerDefinitionMatchesTransition(t *testing.T) {
 		},
 	}
 	vars := map[string]string{"STATUS": "DONE"}
-	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "PENDING", NewValue: "DONE"}, vars)
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "PENDING", NewValue: "DONE"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestTriggerDefinitionDoesNotMatchWrongValue(t *testing.T) {
 		},
 	}
 	vars := map[string]string{"STATUS": "PENDING"}
-	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "TODO", NewValue: "PENDING"}, vars)
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", OldValue: "TODO", NewValue: "PENDING"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestTriggerDefinitionWildcardEntryMatchesAnyValue(t *testing.T) {
 		},
 	}
 	vars := map[string]string{"STATUS": "anything"}
-	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "anything"}, vars)
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "anything"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestTriggerDefinitionMultipleValuesLogicalOr(t *testing.T) {
 	}
 	for _, newVal := range []string{"DONE", "CANCELLED"} {
 		vars := map[string]string{"STATUS": newVal}
-		matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: newVal}, vars)
+		matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: newVal}, vars, nil)
 		if err != nil {
 			t.Fatalf("Matches error: %v", err)
 		}
@@ -456,7 +456,7 @@ func TestTriggerDefinitionMultipleValuesLogicalOr(t *testing.T) {
 		}
 	}
 	vars := map[string]string{"STATUS": "PENDING"}
-	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "PENDING"}, vars)
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "PENDING"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestTriggerDefinitionMultipleEntriesAllMustMatch(t *testing.T) {
 
 	// Both match: fire
 	vars := map[string]string{"STATUS": "DONE", "PRIORITY": "HIGH"}
-	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars)
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestTriggerDefinitionMultipleEntriesAllMustMatch(t *testing.T) {
 
 	// STATUS matches but PRIORITY doesn't: no fire
 	vars = map[string]string{"STATUS": "DONE", "PRIORITY": "LOW"}
-	matches, err = def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars)
+	matches, err = def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestTriggerDefinitionMultipleEntriesAllMustMatch(t *testing.T) {
 
 	// Changed key not in entries: no fire
 	vars = map[string]string{"STATUS": "DONE", "PRIORITY": "HIGH"}
-	matches, err = def.Matches(TriggerChange{Key: "OTHER", NewValue: "x"}, vars)
+	matches, err = def.Matches(TriggerChange{Key: "OTHER", NewValue: "x"}, vars, nil)
 	if err != nil {
 		t.Fatalf("Matches error: %v", err)
 	}
@@ -503,6 +503,94 @@ func TestTriggerDefinitionMultipleEntriesAllMustMatch(t *testing.T) {
 		t.Fatal("expected unrelated key change not to fire")
 	}
 }
+
+func TestTriggerDefinitionMatchesAncestor(t *testing.T) {
+	def := TriggerDefinition{Ancestor: "root"}
+	matches, err := def.Matches(TriggerChange{SessionID: "child"}, nil, map[string]bool{"root": true})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected matching ancestor to fire")
+	}
+}
+
+func TestTriggerDefinitionAncestorMismatchDoesNotFire(t *testing.T) {
+	def := TriggerDefinition{Ancestor: "root"}
+	matches, err := def.Matches(TriggerChange{SessionID: "child"}, nil, map[string]bool{"other": true})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected non-ancestor not to fire")
+	}
+}
+
+func TestTriggerDefinitionAncestorCombinesWithEntries(t *testing.T) {
+	def := TriggerDefinition{
+		Ancestor: "root",
+		Entries: map[string][]string{
+			"STATUS": {"DONE"},
+		},
+	}
+	vars := map[string]string{"STATUS": "DONE"}
+	ancestors := map[string]bool{"root": true}
+
+	matches, err := def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, ancestors)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected matching ancestor and entry to fire")
+	}
+
+	matches, err = def.Matches(TriggerChange{Key: "STATUS", NewValue: "DONE"}, vars, map[string]bool{"other": true})
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if matches {
+		t.Fatal("expected non-matching ancestor not to fire despite matching entry")
+	}
+}
+
+func TestParseTriggerAncestor(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "command: echo\nancestor: root\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.Ancestor != "root" {
+		t.Fatalf("Ancestor = %q, want root", def.Ancestor)
+	}
+}
+
+func TestParseTriggerRejectsAnyChangeWithAncestor(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "any-change: true\nancestor: root\ncommand: echo\n---\nhello")
+	if err == nil {
+		t.Fatal("expected any-change with ancestor to fail")
+	}
+}
+
+func TestAncestorSetWalksParentChain(t *testing.T) {
+	fake := &fakeStore{nodes: []model.SessionNode{
+		{ID: "root"},
+		{ID: "child", Parent: strPtr("root")},
+		{ID: "grandchild", Parent: strPtr("child")},
+	}}
+	a := NewWithStore(fake)
+
+	got, err := a.ancestorSet(context.Background(), "grandchild")
+	if err != nil {
+		t.Fatalf("ancestorSet error: %v", err)
+	}
+	if !got["root"] || !got["child"] {
+		t.Fatalf("ancestorSet = %v, want root and child", got)
+	}
+	if got["grandchild"] {
+		t.Fatal("ancestorSet should not include the session itself")
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
 	_, err := parseTriggerDefinition("test.md", "any-change: true\nentries:\n  STATUS:\ncommand: echo\n---\nhello")

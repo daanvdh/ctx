@@ -241,7 +241,17 @@ Analyse and comment on PR $PR_NUMBER:
 $STORY
 ```
 
-`command` is required. `session` and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
+`command` is required. `session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
+
+**`ancestor` matching** – `ancestor: <session>` requires that `<session>` is an ancestor of the triggering session (found by walking its parent chain), based on an exact ID match. It's optional and ANDs with the other matchers; leave it unset to match any ancestor (or none).
+
+```yaml
+ancestor: root
+entries:
+  STATUS:
+    - value: DONE
+---
+```
 
 **`entries` matching** – each key in `entries` can have zero or more `value` items:
 - Zero values: wildcard — any write to that key fires the trigger.
