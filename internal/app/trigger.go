@@ -33,6 +33,7 @@ type TriggerDefinition struct {
 	Name             string
 	Path             string
 	Session          string
+	Ancestor         string
 	Entries          map[string][]string // key -> accepted values; nil/empty slice = wildcard
 	AnyChange        bool
 	Order            int
@@ -63,6 +64,7 @@ type triggerEntryValue struct {
 type triggerFileData struct {
 	Command          string                         `yaml:"command"`
 	Session          string                         `yaml:"session"`
+	Ancestor         string                         `yaml:"ancestor"`
 	AnyChange        bool                           `yaml:"any-change"`
 	Order            int                            `yaml:"order"`
 	ExecutionSession string                         `yaml:"execution-session"`
@@ -79,10 +81,14 @@ func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange)
 	if err != nil {
 		return err
 	}
+	ancestors, err := a.ancestorSet(ctx, change.SessionID)
+	if err != nil {
+		return err
+	}
 
 	matching := []TriggerDefinition{}
 	for _, def := range defs {
-		matches, err := def.Matches(change, vars)
+		matches, err := def.Matches(change, vars, ancestors)
 		if err != nil {
 			return err
 		}
@@ -192,8 +198,8 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if data.Command == "" {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: missing command", path)
 	}
-	if data.AnyChange && (data.Session != "" || len(data.Entries) > 0) {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with session or entries", path)
+	if data.AnyChange && (data.Session != "" || data.Ancestor != "" || len(data.Entries) > 0) {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with session, ancestor, or entries", path)
 	}
 
 	entries := make(map[string][]string, len(data.Entries))
@@ -209,6 +215,7 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		Name:             strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
 		Path:             path,
 		Session:          data.Session,
+		Ancestor:         data.Ancestor,
 		Entries:          entries,
 		AnyChange:        data.AnyChange,
 		Order:            data.Order,
@@ -220,14 +227,18 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 
 // Matches reports whether this trigger should fire for the given change.
 // vars contains the fully resolved current values for the triggering session.
-func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string) (bool, error) {
+// ancestors contains the IDs of the triggering session's ancestors (not including itself).
+func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string, ancestors map[string]bool) (bool, error) {
 	if d.AnyChange {
 		return true, nil
 	}
-	if d.Session == "" && len(d.Entries) == 0 {
+	if d.Session == "" && d.Ancestor == "" && len(d.Entries) == 0 {
 		return false, nil // manual only
 	}
 	if d.Session != "" && d.Session != change.SessionID {
+		return false, nil
+	}
+	if d.Ancestor != "" && !ancestors[d.Ancestor] {
 		return false, nil
 	}
 	if len(d.Entries) == 0 {
@@ -453,6 +464,32 @@ func splitCommandLine(command string) ([]string, error) {
 		parts = append(parts, current.String())
 	}
 	return parts, nil
+}
+
+// ancestorSet returns the IDs of sessionID's ancestors, not including sessionID itself.
+func (a *App) ancestorSet(ctx context.Context, sessionID string) (map[string]bool, error) {
+	nodes, err := a.store.SessionNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	parents := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.Parent != nil {
+			parents[n.ID] = *n.Parent
+		}
+	}
+
+	ancestors := make(map[string]bool)
+	currentID := sessionID
+	for hops := 0; hops < 50; hops++ {
+		parent, ok := parents[currentID]
+		if !ok || parent == "" || ancestors[parent] {
+			break
+		}
+		ancestors[parent] = true
+		currentID = parent
+	}
+	return ancestors, nil
 }
 
 func (a *App) executionSession(ctx context.Context, def TriggerDefinition, change TriggerChange) (string, error) {
