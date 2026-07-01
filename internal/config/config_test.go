@@ -1,32 +1,40 @@
 package config
 
 import (
-	"encoding/json"
-	"strings"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-func TestSettingsParseErrorReportsLocationAndNearbySetting(t *testing.T) {
-	data := []byte("{\n  \"db_path\": \"/tmp/ctx.sqlite\"\n  \"mcp_http_addr\": \"127.0.0.1:7331\"\n}")
-	err := settingsParseError(data, jsonSyntaxError(t, data))
-
-	for _, want := range []string{
-		"line 3, column 3",
-		`near setting "mcp_http_addr"`,
-		"missing comma",
-	} {
-		if !strings.Contains(err, want) {
-			t.Fatalf("settingsParseError = %q, want substring %q", err, want)
-		}
+func TestWriteSettingsThenLoadSettingsRoundTrips(t *testing.T) {
+	cfgDir := t.TempDir()
+	want := Settings{
+		DBPath:            "/tmp/ctx.sqlite",
+		TriggerLocation:   "triggers",
+		MCPHTTPAddr:       "127.0.0.1:7331",
+		MCPAllowedOrigins: []string{"https://example.com"},
 	}
-}
-
-func jsonSyntaxError(t *testing.T, data []byte) error {
-	t.Helper()
-	var settings Settings
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return err
+	if err := writeSettings(cfgDir, want); err != nil {
+		t.Fatalf("writeSettings() error = %v", err)
 	}
-	t.Fatal("expected JSON syntax error")
-	return nil
+
+	settingsPath := filepath.Join(cfgDir, "settings.yml")
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Fatalf("settings.yml not written: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.yml: %v", err)
+	}
+	var got Settings
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal settings.yml: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("round-tripped settings = %#v, want %#v", got, want)
+	}
 }
