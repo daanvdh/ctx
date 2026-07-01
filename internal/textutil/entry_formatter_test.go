@@ -9,15 +9,29 @@ import (
 
 func TestPreviewUsesFirstLineOnly(t *testing.T) {
 	got := Preview("first line\nsecond line", 60)
-	if got != "first line" {
-		t.Fatalf("Preview = %q, want first line", got)
+	if got != "first line ..." {
+		t.Fatalf("Preview = %q, want first line with truncation marker", got)
+	}
+}
+
+func TestPreviewSingleLineUnderMaxIsUnchanged(t *testing.T) {
+	got := Preview("short value", 60)
+	if got != "short value" {
+		t.Fatalf("Preview = %q, want value unchanged", got)
 	}
 }
 
 func TestPreviewTruncatesFirstLine(t *testing.T) {
-	got := Preview("abcdef\nsecond", 5)
-	if got != "ab..." {
+	got := Preview("abcdefghij\nsecond", 8)
+	if got != "abcd ..." {
 		t.Fatalf("Preview = %q, want truncated first line", got)
+	}
+}
+
+func TestPreviewTrailingNewlineWithNoContentAfter(t *testing.T) {
+	got := Preview("only line\n", 60)
+	if got != "only line" {
+		t.Fatalf("Preview = %q, want no truncation marker for trailing empty line", got)
 	}
 }
 
@@ -33,7 +47,7 @@ func TestLineFormatsDocWithoutEscapedNewlines(t *testing.T) {
 
 func TestLineFormatsStringWithPreview(t *testing.T) {
 	got := Line("TEXT", model.NewEntry("first line\nsecond line", model.ValueTypeString))
-	if got != "TEXT [string] first line" {
-		t.Fatalf("Line = %q, want first-line string preview", got)
+	if got != "TEXT [string] first line ..." {
+		t.Fatalf("Line = %q, want first-line string preview with truncation marker", got)
 	}
 }
