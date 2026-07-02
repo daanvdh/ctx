@@ -1127,3 +1127,45 @@ func TestMultilineCommandAssignmentStored(t *testing.T) {
 		t.Fatalf("MSG not stored in session, values = %v", fake.values)
 	}
 }
+
+func TestMultilineCommandAssignmentExecutesCommandSubstitution(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	tmp := t.TempDir()
+	// A script that prints a fixed message to stdout, simulating e.g. `gh issue create`.
+	scriptPath := filepath.Join(tmp, "create_issue.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf 'issue-created:%s\\n' \"$1\"\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(tmp, "output.txt")
+	// Trigger: capture the script's stdout into GITHUB_MESSAGE, then use it as an argument.
+	trigger := "command: |\n  GITHUB_MESSAGE=$(/bin/sh " + scriptPath + " my-title)\n  /bin/sh -c 'printf \"%s\" \"$1\" > \"$2\"' -- $GITHUB_MESSAGE " + outPath + "\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "assign_cmd.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "assign_cmd"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	// The command's stdout, not the literal "$(...)" text, should be stored.
+	if fake.values["GITHUB_MESSAGE"] != "issue-created:my-title" {
+		t.Fatalf("GITHUB_MESSAGE = %q, want captured command output", fake.values["GITHUB_MESSAGE"])
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if got := string(data); got != "issue-created:my-title" {
+		t.Fatalf("output = %q, want captured value injected into next command", got)
+	}
+}

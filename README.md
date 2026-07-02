@@ -265,7 +265,7 @@ entries:
 ---
 ```
 
-**Multi-line commands** – use a YAML block literal (`|`) to run several commands in sequence. Each non-empty line is executed as a separate subprocess. A line matching `KEY=value` (with a valid ctx key before `=`) stores the variable in the ctx session and makes it available via `$KEY` in subsequent lines.
+**Multi-line commands** – use a YAML block literal (`|`) to run several commands in sequence. Each non-empty line is executed as a separate subprocess. A line matching `KEY=value` (with a valid ctx key before `=`) stores the variable in the ctx session and makes it available via `$KEY` in subsequent lines. Wrap the value as `KEY=$(command)` to run `command` first and store its trimmed stdout instead of the literal text.
 
 ```yaml
 command: |
@@ -274,6 +274,12 @@ command: |
   pi
 ---
 Summarise recent changes for $PROJECT.
+```
+
+```yaml
+command: |
+  GITHUB_MESSAGE=$(gh issue create --title "my-title" --body "my-body")
+execution-session: ctx
 ```
 
 When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session: <session>` to run the command with a specific existing session instead.

@@ -324,6 +324,9 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 // Each non-empty line is executed in isolation as a separate subprocess.
 // Lines matching KEY=value (uppercase-starting key, no spaces before =) are
 // stored in the ctx session and made available to subsequent lines via vars.
+// If value is wrapped as $(...), the enclosed command is executed first and
+// its trimmed stdout becomes the stored value, mirroring shell command
+// substitution.
 // The rendered prompt (if non-empty) is appended as the last argument to the
 // last non-assignment command line.
 // Output is written to stdout and stderr writers.
@@ -345,6 +348,20 @@ func runCommandLines(ctx context.Context, a *App, command, prompt string, vars m
 		}
 
 		if key, value, ok := parseAssignment(renderedLine); ok {
+			if inner, isCmd := commandSubstitution(value); isCmd {
+				cmdParts, err := splitCommandLine(inner)
+				if err != nil {
+					return -1, fmt.Errorf("invalid command: %w", err)
+				}
+				if len(cmdParts) == 0 {
+					return -1, fmt.Errorf("invalid command: empty command substitution")
+				}
+				var outBuf bytes.Buffer
+				if code, runErr := runSubprocess(ctx, cmdParts, env, &outBuf, stderr); runErr != nil {
+					return code, runErr
+				}
+				value = strings.TrimRight(outBuf.String(), "\n")
+			}
 			if err := a.store.SetValue(ctx, sessionID, key, value); err != nil {
 				return -1, err
 			}
@@ -365,21 +382,42 @@ func runCommandLines(ctx context.Context, a *App, command, prompt string, vars m
 			args = append(args, prompt)
 		}
 
-		cmd := exec.CommandContext(ctx, cmdParts[0], args...)
-		cmd.Env = env
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
-		if runErr := cmd.Run(); runErr != nil {
-			code := 1
-			var exitErr *exec.ExitError
-			if errors.As(runErr, &exitErr) {
-				code = exitErr.ExitCode()
-			}
+		if code, runErr := runSubprocess(ctx, append([]string{cmdParts[0]}, args...), env, stdout, stderr); runErr != nil {
 			return code, runErr
 		}
 	}
 
 	return 0, nil
+}
+
+// runSubprocess runs cmdParts as a subprocess, returning the exit code and
+// error (if any) with the same exit-code extraction used across the command
+// runner.
+func runSubprocess(ctx context.Context, cmdParts []string, env []string, stdout, stderr io.Writer) (int, error) {
+	cmd := exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
+	cmd.Env = env
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if runErr := cmd.Run(); runErr != nil {
+		code := 1
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+		return code, runErr
+	}
+	return 0, nil
+}
+
+// commandSubstitution reports whether value is wrapped as $(...), which marks
+// the enclosed command for execution; its trimmed stdout becomes the assigned
+// value, mirroring shell command substitution.
+func commandSubstitution(value string) (inner string, ok bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "$(") || !strings.HasSuffix(trimmed, ")") {
+		return "", false
+	}
+	return strings.TrimSpace(trimmed[2 : len(trimmed)-1]), true
 }
 
 // commandLines splits a command string into individual non-empty lines,
