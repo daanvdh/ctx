@@ -19,6 +19,7 @@ import (
 
 func TestServerInitializeAndToolCalls(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CTX_ID", "")
 
 	var input bytes.Buffer
 	writeTestMessage(t, &input, map[string]any{
@@ -92,6 +93,7 @@ func TestServerInitializeAndToolCalls(t *testing.T) {
 
 func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CTX_ID", "")
 
 	var input bytes.Buffer
 	writeTestMessage(t, &input, map[string]any{
@@ -157,6 +159,7 @@ func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 
 func TestServerReturnsToolErrorForMissingArgument(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CTX_ID", "")
 
 	var input bytes.Buffer
 	writeTestMessage(t, &input, map[string]any{
@@ -185,6 +188,7 @@ func TestServerReturnsToolErrorForMissingArgument(t *testing.T) {
 
 func TestHTTPHandlerServesStreamableHTTP(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CTX_ID", "")
 	handler := NewHTTPHandler(app.New, nil)
 
 	resp := postMCP(t, handler, map[string]any{
@@ -269,6 +273,7 @@ func TestHTTPHandlerRequiresBearerTokenWhenConfigured(t *testing.T) {
 
 func TestHTTPAuthAuthorizationCodeFlowIssuesUsableBearerToken(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CTX_ID", "")
 	auth := NewHTTPAuth(AuthConfig{
 		ClientID:     "claude",
 		ClientSecret: "client-secret",
