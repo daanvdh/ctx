@@ -20,12 +20,16 @@ func Help(_ context.Context, _ []string) error {
 	fmt.Println("  get <session> <key>                        Get a key from a session")
 	fmt.Println("  share <from> <to>                          Share one session's context with another")
 	fmt.Println("  export <session>                           Export all visible keys")
+	fmt.Println("  show [session_id] [--full] [--render]      Show all visible entries, optionally in full or rendered")
 	fmt.Println("  tree [session_id] [-a]                     Show the session tree, scoped to session_id (or CTX_ID) unless -a is given")
 	fmt.Println("      --format text|json                   Choose tree output format")
 	fmt.Println("  render <session> <key>		Render a stored template with placeholders using session variables")
 	fmt.Println("  delete <session>                          Delete a session and its descendants (including variables)")
 	fmt.Println("  execute <session> <template>		Execute a stored trigger template using the defined command and placeholders")
+	fmt.Println("  tick                                      Run every trigger whose schedule matches now")
 	fmt.Println("  serve [--http]                            Serve the ctx MCP server")
 	fmt.Println("  help                                      Show this help message")
+	fmt.Println()
+	fmt.Println("Run any command with --help for details, e.g. ctx show --help")
 	return nil
 }

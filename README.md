@@ -281,6 +281,20 @@ Summarise recent changes for $PROJECT.
 
 When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session: <session>` to run the command with a specific existing session instead.
 
+**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of (or in addition to) a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` requires `session` to be set (a schedule tick has no triggering session to infer one from); `ancestor` and `entries` still apply, checked against the session's current values. Nothing runs schedules automatically — invoke `ctx tick` periodically, e.g. from a crontab entry:
+
+```yaml
+session: root
+schedule: "*/15 * * * *"   # every 15 minutes
+command: pi
+---
+Check for updates on $PROJECT.
+```
+
+```
+* * * * * ctx tick
+```
+
 ## `ctx tree` output example
 
 ```text
