@@ -1,5 +1,8 @@
 # ctx — Agent Context Manager
 
+[![CI](https://github.com/daanvdh/ctx/actions/workflows/ci.yml/badge.svg)](https://github.com/daanvdh/ctx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/daanvdh/ctx)](https://github.com/daanvdh/ctx/releases)
+
 `ctx` is a tiny command-line tool that provides a hierarchical, typed key-value
 store for agent‑oriented workflows. It lets an orchestrator create *sessions* (a
 lightweight context) and attach scalar strings, long-form documents, or file
