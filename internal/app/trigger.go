@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,8 +15,10 @@ import (
 
 	"ctx/internal/config"
 	"ctx/internal/render"
-	"ctx/internal/session"
 	"gopkg.in/yaml.v3"
+	"mvdan.cc/sh/v3/expand"
+	"mvdan.cc/sh/v3/interp"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 type TriggerChange struct {
@@ -299,7 +299,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 
 	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
 	var outBuf, errBuf bytes.Buffer
-	exitCode, runErr := runCommandLines(ctx, a, def.Command, renderedPrompt, vars, executionSession, env, &outBuf, &errBuf)
+	exitCode, runErr := runScript(ctx, def.Command, renderedPrompt, vars, env, &outBuf, &errBuf)
 
 	errText := ""
 	if runErr != nil {
@@ -320,150 +320,56 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	})
 }
 
-// runCommandLines executes a command string that may contain multiple lines.
-// Each non-empty line is executed in isolation as a separate subprocess.
-// Lines matching KEY=value (uppercase-starting key, no spaces before =) are
-// stored in the ctx session and made available to subsequent lines via vars.
-// The rendered prompt (if non-empty) is appended as the last argument to the
-// last non-assignment command line.
+// runScript executes command as a single POSIX shell script via mvdan/sh.
+// Every unique $VAR_NAME placeholder that names a known ctx value is bound
+// once as an opaque positional parameter ($1..$N); the script text only ever
+// sees $1, $2, etc. in their place. $NAME references that aren't known ctx
+// values (e.g. a variable the script assigns itself, like STORY_ID=$(...))
+// are left untouched for the shell to resolve natively. If prompt is
+// non-empty, it is bound as one more trailing positional parameter and
+// referenced at the end of the (trimmed) script, mirroring the old behavior
+// of appending it to the last command's arguments.
 // Output is written to stdout and stderr writers.
-func runCommandLines(ctx context.Context, a *App, command, prompt string, vars map[string]string, sessionID string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
-	localVars := make(map[string]string, len(vars))
-	for k, v := range vars {
-		localVars[k] = v
+func runScript(ctx context.Context, command, prompt string, vars map[string]string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
+	indices := make(map[string]int)
+	args := make([]string, 0)
+	for _, name := range render.ExtractVarNames(command) {
+		value, ok := vars[name]
+		if !ok {
+			continue
+		}
+		indices[name] = len(args) + 1
+		args = append(args, value)
 	}
 
-	lines := commandLines(command)
-	for i, rawLine := range lines {
-		renderedLine, err := render.TemplateString(rawLine, localVars)
-		if err != nil {
-			return -1, err
-		}
-		renderedLine = strings.TrimSpace(renderedLine)
-		if renderedLine == "" {
-			continue
-		}
+	script := render.RewriteVars(command, indices)
+	if prompt != "" {
+		args = append(args, prompt)
+		script = fmt.Sprintf("%s \"$%d\"", strings.TrimRight(script, "\n"), len(args))
+	}
 
-		if key, value, ok := parseAssignment(renderedLine); ok {
-			if err := a.store.SetValue(ctx, sessionID, key, value); err != nil {
-				return -1, err
-			}
-			localVars[key] = value
-			continue
-		}
+	file, err := syntax.NewParser().Parse(strings.NewReader(script), "")
+	if err != nil {
+		return -1, fmt.Errorf("invalid command: %w", err)
+	}
 
-		cmdParts, err := splitCommandLine(renderedLine)
-		if err != nil {
-			return -1, fmt.Errorf("invalid command: %w", err)
-		}
-		if len(cmdParts) == 0 {
-			continue
-		}
+	runner, err := interp.New(
+		interp.Params(args...),
+		interp.Env(expand.ListEnviron(env...)),
+		interp.StdIO(nil, stdout, stderr),
+	)
+	if err != nil {
+		return -1, err
+	}
 
-		args := cmdParts[1:]
-		if prompt != "" && i == len(lines)-1 {
-			args = append(args, prompt)
+	if runErr := runner.Run(ctx, file); runErr != nil {
+		if code, ok := interp.IsExitStatus(runErr); ok {
+			return int(code), runErr
 		}
-
-		cmd := exec.CommandContext(ctx, cmdParts[0], args...)
-		cmd.Env = env
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
-		if runErr := cmd.Run(); runErr != nil {
-			code := 1
-			var exitErr *exec.ExitError
-			if errors.As(runErr, &exitErr) {
-				code = exitErr.ExitCode()
-			}
-			return code, runErr
-		}
+		return 1, runErr
 	}
 
 	return 0, nil
-}
-
-// commandLines splits a command string into individual non-empty lines,
-// trimming whitespace and trailing semicolons from each line.
-func commandLines(command string) []string {
-	var lines []string
-	for _, line := range strings.Split(command, "\n") {
-		line = strings.TrimSpace(line)
-		line = strings.TrimSuffix(line, ";")
-		line = strings.TrimSpace(line)
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}
-
-// parseAssignment detects a KEY=value assignment where KEY is a valid ctx key
-// that starts with a letter or underscore and contains no whitespace before =.
-// This distinguishes assignments from commands that happen to contain =.
-func parseAssignment(line string) (key, value string, ok bool) {
-	idx := strings.IndexByte(line, '=')
-	if idx <= 0 {
-		return "", "", false
-	}
-	k := line[:idx]
-	if strings.ContainsAny(k, " \t") {
-		return "", "", false
-	}
-	if !session.ValidShellKey(k) {
-		return "", "", false
-	}
-	return k, line[idx+1:], true
-}
-
-// splitCommandLine splits a command string into argv-style parts while preserving quoted arguments.
-func splitCommandLine(command string) ([]string, error) {
-	var parts []string
-	var current strings.Builder
-	inSingle := false
-	inDouble := false
-	escaping := false
-	hasPart := false
-
-	for _, r := range command {
-		if escaping {
-			current.WriteRune(r)
-			escaping = false
-			hasPart = true
-			continue
-		}
-
-		switch {
-		case r == '\\' && !inSingle:
-			escaping = true
-			hasPart = true
-		case r == '\'' && !inDouble:
-			inSingle = !inSingle
-			hasPart = true
-		case r == '"' && !inSingle:
-			inDouble = !inDouble
-			hasPart = true
-		case (r == ' ' || r == '\t' || r == '\n' || r == '\r') && !inSingle && !inDouble:
-			if hasPart {
-				parts = append(parts, current.String())
-				current.Reset()
-				hasPart = false
-			}
-		default:
-			current.WriteRune(r)
-			hasPart = true
-		}
-	}
-
-	if escaping {
-		return nil, fmt.Errorf("unterminated escape")
-	}
-	if inSingle || inDouble {
-		return nil, fmt.Errorf("unterminated quote")
-	}
-	if hasPart {
-		parts = append(parts, current.String())
-	}
-	return parts, nil
 }
 
 // ancestorSet returns the IDs of sessionID's ancestors, not including sessionID itself.
