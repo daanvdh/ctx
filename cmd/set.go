@@ -10,6 +10,16 @@ import (
 )
 
 func Set(ctx context.Context, args []string) error {
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx set [session_id] <key> <value>
+       ctx set [session_id] <key> --doc [text]
+       ctx set [session_id] <key> --path <path>
+
+Set a key in a session. --doc stores a doc value (reads from stdin if
+text is omitted). --path stores a file_ref pointing at <path>.`)
+		return nil
+	}
+
 	parsed, err := parseSetArgs(args)
 	if err != nil {
 		return err

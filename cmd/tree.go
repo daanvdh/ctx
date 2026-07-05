@@ -8,14 +8,12 @@ import (
 )
 
 func Tree(ctx context.Context, args []string) error {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Println(`Usage: ctx tree [session_id] [-a] [--format text|json]
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx tree [session_id] [-a] [--format text|json]
 
 Show the session tree. If session_id is omitted, CTX_ID is used.
 With -a (or no session_id and no CTX_ID), show the full tree of all sessions.`)
-			return nil
-		}
+		return nil
 	}
 
 	parsed, err := parseTreeArgs(args)

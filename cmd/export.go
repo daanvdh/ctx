@@ -6,6 +6,17 @@ import (
 )
 
 func Export(ctx context.Context, args []string) error {
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx export [session_id] [--include-docs] [--files-as-paths] [--quiet]
+
+Print all visible key/value pairs as shell export lines, including
+CTX_ID. Doc and file_ref values are skipped by default; --include-docs
+exports doc values inline, --files-as-paths exports file_ref values as
+their path. --quiet suppresses warnings for keys that aren't valid
+shell variable names.`)
+		return nil
+	}
+
 	includeDocs := false
 	filesAsPaths := false
 	quiet := false

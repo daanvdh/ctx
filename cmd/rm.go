@@ -6,14 +6,12 @@ import (
 )
 
 func Rm(ctx context.Context, args []string) error {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Println(`Usage: ctx rm [session] <entry>
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx rm [session] <entry>
 
 Remove an entry from a session. entry may contain wildcards (*, ?, [...])
 to remove all matching entries, e.g. ctx rm "*trigger_log*".`)
-			return nil
-		}
+		return nil
 	}
 
 	parsed, err := parseRmArgs(args)

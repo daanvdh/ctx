@@ -8,17 +8,15 @@ import (
 )
 
 func Show(ctx context.Context, args []string) error {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Println(`Usage: ctx show [session_id] [--full] [--render]
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx show [session_id] [--full] [--render]
 
 Show all entries visible to a session. By default, doc and file values
 are previewed (first characters only). --full shows the complete
 value instead. --render additionally substitutes $VAR placeholders
 (recursively, up to depth 10) before display. Both flags can be
 combined.`)
-			return nil
-		}
+		return nil
 	}
 
 	opts := app.ShowOptions{}

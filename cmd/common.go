@@ -21,6 +21,16 @@ func usage(_ string, text string) error {
 	return fmt.Errorf("usage: %s", text)
 }
 
+// helpRequested reports whether args contains --help or -h.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
 func sessionArg(args []string, hasExplicitSession bool) (string, error) {
 	if hasExplicitSession {
 		return args[0], nil

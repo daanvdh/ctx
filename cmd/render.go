@@ -8,6 +8,15 @@ import (
 // Render handles the `ctx render <session> <key>` command.
 // It renders a stored template by substituting `$VAR` placeholders with values from the session context.
 func Render(ctx context.Context, args []string) error {
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx render [--ignore-missing] [session] <key>
+
+Render a stored template by substituting $VAR placeholders with
+values resolved for the session (including ancestors). --ignore-missing
+leaves unresolved placeholders in place instead of erroring.`)
+		return nil
+	}
+
 	ignoreMissing := false
 	filtered := args[:0]
 	for _, arg := range args {
