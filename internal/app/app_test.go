@@ -692,9 +692,8 @@ func TestParseTriggerMultilineCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
-	lines := commandLines(def.Command)
-	if len(lines) != 2 || lines[0] != "git pull" || lines[1] != "git status" {
-		t.Fatalf("command lines = %v, want [git pull, git status]", lines)
+	if want := "git pull\ngit status\n"; def.Command != want {
+		t.Fatalf("Command = %q, want %q", def.Command, want)
 	}
 }
 
@@ -880,6 +879,41 @@ func TestExecuteRendersCommandPlaceholders(t *testing.T) {
 	}
 }
 
+func TestExecuteRepeatedPlaceholderReusesPositionalIndex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "capture-args.sh")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$#\" \"$2\" \"$3\" > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "args.txt")
+	trigger := "command: /bin/sh " + scriptPath + " " + outPath + ` "$TITLE" "$TITLE"`
+	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"TITLE": "hello world"}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "manual"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read args output: %v", err)
+	}
+	if got := string(data); got != "3\nhello world\nhello world\n" {
+		t.Fatalf("args output = %q, want repeated placeholder bound to same positional index", got)
+	}
+}
+
 func TestSetValueTriggerPreservesQuotedCommandArg(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -956,10 +990,21 @@ func TestSetValueTriggerRendersCommandPlaceholders(t *testing.T) {
 	}
 }
 
-func TestSplitCommandLineRejectsUnterminatedQuote(t *testing.T) {
-	_, err := splitCommandLine(`ctx set ctx test2 "success 1`)
-	if err == nil {
-		t.Fatal("expected unterminated quote to fail")
+func TestExecuteRejectsInvalidScript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := `command: echo "unterminated`
+	if err := os.WriteFile(filepath.Join(triggerDir, "bad.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	a := NewWithStore(&fakeStore{resolved: map[string]string{}})
+	if err := a.Execute(context.Background(), "s1", "bad"); err == nil {
+		t.Fatal("expected invalid script to fail")
 	}
 }
 
@@ -1086,7 +1131,7 @@ func TestMultilineCommandExecutesAllLines(t *testing.T) {
 	}
 }
 
-func TestMultilineCommandAssignmentStored(t *testing.T) {
+func TestMultilineScriptNativeShellVarPersists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
@@ -1101,8 +1146,9 @@ func TestMultilineCommandAssignmentStored(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$1\" > \"$2\"\n"), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
-	// Trigger: assign MSG=hello, then use $MSG as argument to the script.
-	trigger := "command: |\n  MSG=hello\n  /bin/sh " + scriptPath + " $MSG " + outPath + "\n"
+	// A real shell assignment (not ctx set) should persist natively across
+	// the rest of the same script, without being written to the ctx store.
+	trigger := "command: |\n  MSG=hello\n  /bin/sh " + scriptPath + " \"$MSG\" " + outPath + "\n"
 	if err := os.WriteFile(filepath.Join(triggerDir, "assign.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1119,11 +1165,10 @@ func TestMultilineCommandAssignmentStored(t *testing.T) {
 		t.Fatalf("read output: %v", err)
 	}
 	if got := string(data); got != "hello\n" {
-		t.Fatalf("output = %q, want assignment injected into next command", got)
+		t.Fatalf("output = %q, want shell assignment visible to later commands", got)
 	}
 
-	// The assignment should have been stored in the session.
-	if fake.values["MSG"] != "hello" {
-		t.Fatalf("MSG not stored in session, values = %v", fake.values)
+	if _, ok := fake.values["MSG"]; ok {
+		t.Fatalf("MSG should not be stored in the ctx session, values = %v", fake.values)
 	}
 }

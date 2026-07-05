@@ -1,5 +1,8 @@
 # ctx — Agent Context Manager
 
+[![CI](https://github.com/daanvdh/ctx/actions/workflows/ci.yml/badge.svg)](https://github.com/daanvdh/ctx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/daanvdh/ctx)](https://github.com/daanvdh/ctx/releases)
+
 `ctx` is a tiny command-line tool that provides a hierarchical, typed key-value
 store for agent‑oriented workflows. It lets an orchestrator create *sessions* (a
 lightweight context) and attach scalar strings, long-form documents, or file
@@ -265,7 +268,7 @@ entries:
 ---
 ```
 
-**Multi-line commands** – use a YAML block literal (`|`) to run several commands in sequence. Each non-empty line is executed as a separate subprocess. A line matching `KEY=value` (with a valid ctx key before `=`) stores the variable in the ctx session and makes it available via `$KEY` in subsequent lines.
+**Multi-line commands** – use a YAML block literal (`|`) to run the whole block as a single POSIX shell script (via [`mvdan/sh`](https://github.com/mvdan/sh)). `$VAR` placeholders naming a known ctx value are resolved once up front and bound as positional parameters; any other `$VAR` (e.g. one the script assigns itself, like `ID=$(...)`) is left for the shell to resolve natively, so ordinary shell variables persist across the whole script. Use `ctx set` from within the script to persist a value beyond its lifetime.
 
 ```yaml
 command: |

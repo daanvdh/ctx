@@ -77,3 +77,39 @@ func TestTemplateStringIgnoreMissing(t *testing.T) {
 		t.Fatalf("got %q, want missing placeholder preserved", got)
 	}
 }
+
+func TestExtractVarNamesOrderAndDedup(t *testing.T) {
+	got := ExtractVarNames(`echo "$TITLE" $DESCRIPTION; echo again: "$TITLE"`)
+	want := []string{"TITLE", "DESCRIPTION"}
+	if len(got) != len(want) {
+		t.Fatalf("names = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("names = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestExtractVarNamesSkipsEscaped(t *testing.T) {
+	got := ExtractVarNames("literal $$ISSUE and real $STORY")
+	if len(got) != 1 || got[0] != "STORY" {
+		t.Fatalf("names = %v, want [STORY]", got)
+	}
+}
+
+func TestRewriteVarsReplacesKnownNames(t *testing.T) {
+	got := RewriteVars(`echo "$TITLE" $STORY_ID`, map[string]int{"TITLE": 1})
+	want := `echo "$1" $STORY_ID`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRewriteVarsPreservesEscape(t *testing.T) {
+	got := RewriteVars("literal $$ISSUE and real $ISSUE", map[string]int{"ISSUE": 1})
+	want := "literal $ISSUE and real $1"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

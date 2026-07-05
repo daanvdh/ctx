@@ -124,6 +124,83 @@ func readVarName(s string, start int) (string, int, bool) {
 	return s[start:end], end, true
 }
 
+// RewriteVars replaces each $VAR_NAME placeholder in tmpl with $N, where N is
+// looked up in indices (1-based positional parameter index). Names absent
+// from indices are left untouched. "$$" escaping rules match TemplateString.
+func RewriteVars(tmpl string, indices map[string]int) string {
+	var out strings.Builder
+
+	for i := 0; i < len(tmpl); {
+		if tmpl[i] != '$' {
+			out.WriteByte(tmpl[i])
+			i++
+			continue
+		}
+
+		if i+1 < len(tmpl) && tmpl[i+1] == '$' {
+			if name, end, ok := readVarName(tmpl, i+2); ok {
+				out.WriteByte('$')
+				out.WriteString(name)
+				i = end
+				continue
+			}
+			out.WriteByte('$')
+			i += 2
+			continue
+		}
+
+		name, end, ok := readVarName(tmpl, i+1)
+		if !ok {
+			out.WriteByte('$')
+			i++
+			continue
+		}
+
+		idx, ok := indices[name]
+		if !ok {
+			out.WriteByte('$')
+			out.WriteString(name)
+			i = end
+			continue
+		}
+		fmt.Fprintf(&out, "$%d", idx)
+		i = end
+	}
+
+	return out.String()
+}
+
+// ExtractVarNames scans tmpl for $VAR_NAME placeholders and returns the
+// unique names in order of first appearance. "$$" escapes are skipped, matching
+// TemplateString's escaping rules.
+func ExtractVarNames(tmpl string) []string {
+	var names []string
+	seen := map[string]struct{}{}
+
+	for i := 0; i < len(tmpl); {
+		if tmpl[i] != '$' {
+			i++
+			continue
+		}
+		if i+1 < len(tmpl) && tmpl[i+1] == '$' {
+			i += 2
+			continue
+		}
+		name, end, ok := readVarName(tmpl, i+1)
+		if !ok {
+			i++
+			continue
+		}
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+		i = end
+	}
+
+	return names
+}
+
 func isVarStart(r rune) bool {
 	return r == '_' || unicode.IsLetter(r)
 }
