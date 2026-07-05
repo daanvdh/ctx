@@ -45,6 +45,14 @@ type App struct {
 }
 
 func New() (*App, error) {
+	settings, err := config.LoadSettings()
+	if err != nil {
+		return nil, err
+	}
+	if settings.RemoteMCPURL != "" {
+		return NewWithStore(store.NewRemote(settings.RemoteMCPURL, settings.RemoteMCPToken)), nil
+	}
+
 	dbPath, err := config.DBPath()
 	if err != nil {
 		return nil, err
@@ -187,6 +195,14 @@ func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string,
 		return nil, err
 	}
 	return resolveEntries(entries, "resolve")
+}
+
+// ResolveEntries returns all visible entries for a session as stored
+// (doc values in full, file_ref values as their path, unlike Resolve which
+// reads file_ref content). Used by the ctx_resolve_entries MCP tool so a
+// remote-backed client can reconstruct typed entries.
+func (a *App) ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error) {
+	return a.store.ResolveEntries(ctx, sessionID)
 }
 
 func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths, quiet bool) ([]string, error) {

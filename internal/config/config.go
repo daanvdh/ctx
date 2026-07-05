@@ -19,6 +19,8 @@ type Settings struct {
 	MCPOAuthClientID     string   `yaml:"mcp_oauth_client_id"`
 	MCPOAuthClientSecret string   `yaml:"mcp_oauth_client_secret"`
 	MCPPublicURL         string   `yaml:"mcp_public_url"`
+	RemoteMCPURL         string   `yaml:"remote_mcp_url"`
+	RemoteMCPToken       string   `yaml:"remote_mcp_token"`
 }
 
 func Dir() (string, error) {

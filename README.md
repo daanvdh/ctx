@@ -44,6 +44,12 @@ go install github.com/daanvdh/ctx@latest
   mcp_oauth_client_secret: long-random-secret
   ```
   Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
+- To use a remote ctx MCP server as the backend instead of a local sqlite db, set `remote_mcp_url` (and `remote_mcp_token` if the server requires a bearer token) in `settings.yml`:
+  ```yaml
+  remote_mcp_url: http://ctx-host:7331/mcp
+  remote_mcp_token: long-random-secret
+  ```
+  Every `ctx` command then talks to that server's `tools/call` endpoint instead of a local db. `ctx rm` and `ctx set --path` are not supported yet over a remote backend (the MCP protocol has no tool for them).
 
 ## Core Commands
 

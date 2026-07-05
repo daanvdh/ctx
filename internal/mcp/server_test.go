@@ -157,6 +157,43 @@ func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 	}
 }
 
+func TestServerResolveEntriesReturnsFullDocValueUnlikeShow(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CTX_ID", "")
+
+	var input bytes.Buffer
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{"name": "ctx_new", "arguments": map[string]any{"id": "root"}},
+	})
+	longDoc := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n"
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "ctx_set",
+			"arguments": map[string]any{"session_id": "root", "key": "DOC", "value": longDoc, "is_doc": true},
+		},
+	})
+	writeTestMessage(t, &input, map[string]any{
+		"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+		"params": map[string]any{"name": "ctx_resolve_entries", "arguments": map[string]any{"session_id": "root"}},
+	})
+
+	var output bytes.Buffer
+	if err := NewServer(&input, &output).Serve(context.Background()); err != nil {
+		t.Fatalf("Serve error: %v", err)
+	}
+
+	responses := readTestResponses(t, output.Bytes())
+	text := toolText(t, responses[2])
+	if !strings.Contains(text, `"value_type": "doc"`) {
+		t.Fatalf("ctx_resolve_entries response = %s, want value_type doc", text)
+	}
+	if !strings.Contains(text, "11") {
+		t.Fatalf("ctx_resolve_entries response = %s, want full doc value (not truncated like ctx_show)", text)
+	}
+}
+
 func TestServerReturnsToolErrorForMissingArgument(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CTX_ID", "")
