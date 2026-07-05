@@ -329,6 +329,13 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 // substitution.
 // The rendered prompt (if non-empty) is appended as the last argument to the
 // last non-assignment command line.
+//
+// Quoting and word-splitting are resolved on the raw, unrendered line before
+// any $VAR placeholder is substituted, and each resulting word is rendered on
+// its own. This mirrors how a real shell expands "$VAR": the placeholder's
+// value is spliced in as an opaque, literal string and can never introduce
+// its own quotes or spaces to change argument boundaries.
+//
 // Output is written to stdout and stderr writers.
 func runCommandLines(ctx context.Context, a *App, command, prompt string, vars map[string]string, sessionID string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
 	localVars := make(map[string]string, len(vars))
@@ -338,29 +345,10 @@ func runCommandLines(ctx context.Context, a *App, command, prompt string, vars m
 
 	lines := commandLines(command)
 	for i, rawLine := range lines {
-		renderedLine, err := render.TemplateString(rawLine, localVars)
-		if err != nil {
-			return -1, err
-		}
-		renderedLine = strings.TrimSpace(renderedLine)
-		if renderedLine == "" {
-			continue
-		}
-
-		if key, value, ok := parseAssignment(renderedLine); ok {
-			if inner, isCmd := commandSubstitution(value); isCmd {
-				cmdParts, err := splitCommandLine(inner)
-				if err != nil {
-					return -1, fmt.Errorf("invalid command: %w", err)
-				}
-				if len(cmdParts) == 0 {
-					return -1, fmt.Errorf("invalid command: empty command substitution")
-				}
-				var outBuf bytes.Buffer
-				if code, runErr := runSubprocess(ctx, cmdParts, env, &outBuf, stderr); runErr != nil {
-					return code, runErr
-				}
-				value = strings.TrimRight(outBuf.String(), "\n")
+		if key, rawValue, ok := parseAssignment(rawLine); ok {
+			value, code, err := renderAssignmentValue(ctx, rawValue, localVars, env, stderr)
+			if err != nil {
+				return code, err
 			}
 			if err := a.store.SetValue(ctx, sessionID, key, value); err != nil {
 				return -1, err
@@ -369,11 +357,19 @@ func runCommandLines(ctx context.Context, a *App, command, prompt string, vars m
 			continue
 		}
 
-		cmdParts, err := splitCommandLine(renderedLine)
+		rawParts, err := splitCommandLine(rawLine)
 		if err != nil {
 			return -1, fmt.Errorf("invalid command: %w", err)
 		}
-		if len(cmdParts) == 0 {
+		if len(rawParts) == 0 {
+			continue
+		}
+
+		cmdParts, err := renderArgs(rawParts, localVars)
+		if err != nil {
+			return -1, err
+		}
+		if allBlank(cmdParts) {
 			continue
 		}
 
@@ -388,6 +384,67 @@ func runCommandLines(ctx context.Context, a *App, command, prompt string, vars m
 	}
 
 	return 0, nil
+}
+
+// renderArgs renders each already-tokenized argument on its own, so a
+// placeholder's value is substituted as a single opaque argument regardless
+// of any quote or whitespace characters it contains.
+func renderArgs(rawParts []string, vars map[string]string) ([]string, error) {
+	rendered := make([]string, len(rawParts))
+	for i, part := range rawParts {
+		value, err := render.TemplateString(part, vars)
+		if err != nil {
+			return nil, err
+		}
+		rendered[i] = value
+	}
+	return rendered, nil
+}
+
+// allBlank reports whether every part is empty once trimmed, meaning the
+// line resolved to nothing (e.g. a line consisting solely of a placeholder
+// that rendered empty) and should be treated as a no-op.
+func allBlank(parts []string) bool {
+	for _, p := range parts {
+		if strings.TrimSpace(p) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// renderAssignmentValue renders the raw right-hand side of a KEY=value
+// assignment. If the raw (unrendered) value is wrapped as $(...), the
+// enclosed command is tokenized and rendered argument-by-argument (the same
+// quote-safe process used for regular command lines), then executed; its
+// trimmed stdout becomes the value. Otherwise the raw value is rendered as a
+// single opaque string, since it is stored as-is and never split into argv.
+// The returned exit code is only meaningful when err is non-nil.
+func renderAssignmentValue(ctx context.Context, rawValue string, vars map[string]string, env []string, stderr io.Writer) (value string, exitCode int, err error) {
+	if rawInner, isCmd := commandSubstitution(rawValue); isCmd {
+		rawParts, err := splitCommandLine(rawInner)
+		if err != nil {
+			return "", -1, fmt.Errorf("invalid command: %w", err)
+		}
+		if len(rawParts) == 0 {
+			return "", -1, fmt.Errorf("invalid command: empty command substitution")
+		}
+		cmdParts, err := renderArgs(rawParts, vars)
+		if err != nil {
+			return "", -1, err
+		}
+		var outBuf bytes.Buffer
+		if code, runErr := runSubprocess(ctx, cmdParts, env, &outBuf, stderr); runErr != nil {
+			return "", code, runErr
+		}
+		return strings.TrimRight(outBuf.String(), "\n"), 0, nil
+	}
+
+	value, err = render.TemplateString(rawValue, vars)
+	if err != nil {
+		return "", -1, err
+	}
+	return value, 0, nil
 }
 
 // runSubprocess runs cmdParts as a subprocess, returning the exit code and
