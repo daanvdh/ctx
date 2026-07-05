@@ -10,7 +10,8 @@ func Rm(ctx context.Context, args []string) error {
 		if arg == "--help" || arg == "-h" {
 			fmt.Println(`Usage: ctx rm [session] <entry>
 
-Remove an entry from a session.`)
+Remove an entry from a session. entry may contain wildcards (*, ?, [...])
+to remove all matching entries, e.g. ctx rm "*trigger_log*".`)
 			return nil
 		}
 	}
