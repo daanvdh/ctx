@@ -281,7 +281,7 @@ func TestSetDocRejectsTooLargeContent(t *testing.T) {
 
 func TestShow(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"B": "2", "A": "1"}})
-	lines, err := a.Show(context.Background(), "s1")
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
 	if err != nil {
 		t.Fatalf("Show error: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestShowFormatsFileRefAsPath(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1")
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
 	if err != nil {
 		t.Fatalf("Show error: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestShowPreviewsFirstLine(t *testing.T) {
 		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1")
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
 	if err != nil {
 		t.Fatalf("Show error: %v", err)
 	}
@@ -327,6 +327,39 @@ func TestShowPreviewsFirstLine(t *testing.T) {
 	}
 	if !strings.Contains(got, "DOC [doc]") || !strings.Contains(got, "doc line") || !strings.Contains(got, "TEXT [string] text line") {
 		t.Fatalf("Show = %q, want doc and string previews", got)
+	}
+}
+
+func TestShowFullShowsUntruncatedContent(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"DOC": model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "DOC [doc] doc line\nhidden line"
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %q, want %q", strings.Join(lines, "\n"), want)
+	}
+}
+
+func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+		"NAME":     model.NewEntry("$FIRST $LAST", model.ValueTypeString),
+		"FIRST":    model.NewEntry("ada", model.ValueTypeString),
+		"LAST":     model.NewEntry("lovelace", model.ValueTypeString),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "GREETING [string] hello ada lovelace") {
+		t.Fatalf("Show = %q, want recursively rendered GREETING", got)
 	}
 }
 

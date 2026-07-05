@@ -224,15 +224,47 @@ func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAs
 	return lines, nil
 }
 
-func (a *App) Show(ctx context.Context, sessionID string) ([]string, error) {
+type ShowOptions struct {
+	Full   bool
+	Render bool
+}
+
+func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
+	var resolvedForRender map[string]string
+	if opts.Render {
+		resolvedForRender, err = resolveEntries(entries, "render")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	lines := make([]string, 0, len(entries))
 	for _, key := range sortedEntryKeys(entries) {
-		lines = append(lines, textutil.Line(key, entries[key]))
+		entry := entries[key]
+		if !opts.Full && !opts.Render {
+			lines = append(lines, textutil.Line(key, entry))
+			continue
+		}
+
+		content, err := resolveEntryContent(key, entry, "show")
+		if err != nil {
+			return nil, err
+		}
+		if opts.Render {
+			content, err = render.TemplateStringRecursive(content, resolvedForRender, render.TemplateOptions{}, render.MaxRenderDepth)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !opts.Full {
+			content = textutil.Preview(content, textutil.PreviewChars)
+		}
+		lines = append(lines, textutil.FullLine(key, entry, content))
 	}
 	return lines, nil
 }

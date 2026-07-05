@@ -29,6 +29,12 @@ func Line(key string, entry model.Entry) string {
 	}
 }
 
+// FullLine returns the display line for a typed entry using already-resolved
+// content, bypassing the per-type preview/truncation used by Line.
+func FullLine(key string, entry model.Entry, content string) string {
+	return fmt.Sprintf("%s [%s] %s", key, entry.ValueType, content)
+}
+
 // Preview returns the first line of a value, truncated to max characters.
 // Whenever content is cut off, whether because the first line exceeds max
 // characters or because the value has additional lines, " ..." is appended.

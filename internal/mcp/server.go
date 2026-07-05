@@ -598,7 +598,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]any{"values": values}
 	case "ctx_show":
-		lines, err := a.Show(ctx, requiredString(args, "session_id"))
+		lines, err := a.Show(ctx, requiredString(args, "session_id"), app.ShowOptions{})
 		if err != nil {
 			return toolError(err), nil
 		}
