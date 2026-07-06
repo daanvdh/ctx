@@ -28,7 +28,7 @@ type Store interface {
 	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
 	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
-	DeleteSession(ctx context.Context, sessionID string, recursive bool) error
+	DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error
 }
 
 type SQLite struct {
@@ -728,17 +728,17 @@ func (s *SQLite) SessionNodes(ctx context.Context) ([]model.SessionNode, error) 
 	return nodes, nil
 }
 
-func DeleteSession(path, sessionID string, recursive bool) error {
-	return NewSQLite(path).DeleteSession(context.Background(), sessionID, recursive)
+func DeleteSession(path, sessionID string, recursive, noVar, noChild bool) error {
+	return NewSQLite(path).DeleteSession(context.Background(), sessionID, recursive, noVar, noChild)
 }
 
-func (s *SQLite) DeleteSession(ctx context.Context, sessionID string, recursive bool) error {
+func (s *SQLite) DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error {
 	return retryBusy(ctx, func() error {
-		return s.deleteSession(ctx, sessionID, recursive)
+		return s.deleteSession(ctx, sessionID, recursive, noVar, noChild)
 	})
 }
 
-func (s *SQLite) deleteSession(ctx context.Context, sessionID string, recursive bool) error {
+func (s *SQLite) deleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error {
 	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
@@ -767,22 +767,92 @@ func (s *SQLite) deleteSession(ctx context.Context, sessionID string, recursive 
 		if children > 0 {
 			return fmt.Errorf("session %s has child sessions, use --recursive to delete them too", sessionID)
 		}
+
+		if noVar {
+			var vars int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_data WHERE session_id = ?`, sessionID).Scan(&vars); err != nil {
+				return fmt.Errorf("store: check variables of %s: %w", sessionID, err)
+			}
+			if vars > 0 {
+				return fmt.Errorf("session %s has variables, remove --no-var or delete them first", sessionID)
+			}
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session_data WHERE session_id = ?`, sessionID); err != nil {
+			return fmt.Errorf("store: delete session data for %s: %w", sessionID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, sessionID); err != nil {
+			return fmt.Errorf("store: delete session %s: %w", sessionID, err)
+		}
+		return tx.Commit()
 	}
 
-	const descendants = `
-        WITH RECURSIVE descendants(id) AS (
-            SELECT id FROM sessions WHERE id = ?
+	rows, err := tx.QueryContext(ctx, `
+        WITH RECURSIVE descendants(id, parent_id, depth) AS (
+            SELECT id, parent_id, 0 FROM sessions WHERE id = ?
             UNION ALL
-            SELECT sessions.id
+            SELECT sessions.id, sessions.parent_id, descendants.depth + 1
             FROM sessions
             JOIN descendants ON sessions.parent_id = descendants.id
-        )`
-
-	if _, err := tx.ExecContext(ctx, descendants+` DELETE FROM session_data WHERE session_id IN (SELECT id FROM descendants)`, sessionID); err != nil {
-		return fmt.Errorf("store: delete session data for %s: %w", sessionID, err)
+        )
+        SELECT d.id, d.parent_id, EXISTS(SELECT 1 FROM session_data sd WHERE sd.session_id = d.id)
+        FROM descendants d
+        ORDER BY d.depth DESC`, sessionID)
+	if err != nil {
+		return fmt.Errorf("store: query descendants of %s: %w", sessionID, err)
 	}
-	if _, err := tx.ExecContext(ctx, descendants+` DELETE FROM sessions WHERE id IN (SELECT id FROM descendants)`, sessionID); err != nil {
-		return fmt.Errorf("store: delete sessions for %s: %w", sessionID, err)
+	type node struct {
+		id, parentID string
+		hasVars      bool
+	}
+	var nodes []node
+	for rows.Next() {
+		var n node
+		var parentID sql.NullString
+		if err := rows.Scan(&n.id, &parentID, &n.hasVars); err != nil {
+			rows.Close()
+			return fmt.Errorf("store: scan descendant of %s: %w", sessionID, err)
+		}
+		n.parentID = parentID.String
+		nodes = append(nodes, n)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("store: iterate descendants of %s: %w", sessionID, err)
+	}
+	rows.Close()
+
+	// bottom-up: nodes is ordered deepest-first, so children are decided before their parent.
+	kept := make(map[string]bool, len(nodes))
+	var toDelete []string
+	for _, n := range nodes {
+		if noVar && n.hasVars {
+			kept[n.id] = true
+			continue
+		}
+		if noChild {
+			hasKeptChild := false
+			for _, other := range nodes {
+				if other.parentID == n.id && kept[other.id] {
+					hasKeptChild = true
+					break
+				}
+			}
+			if hasKeptChild {
+				kept[n.id] = true
+				continue
+			}
+		}
+		toDelete = append(toDelete, n.id)
+	}
+
+	for _, id := range toDelete {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session_data WHERE session_id = ?`, id); err != nil {
+			return fmt.Errorf("store: delete session data for %s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("store: delete session %s: %w", id, err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

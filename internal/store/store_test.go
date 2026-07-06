@@ -446,11 +446,11 @@ func TestDeleteSessionRecursive(t *testing.T) {
 		t.Fatalf("SetValue error: %v", err)
 	}
 
-	if err := DeleteSession(dsn, "root", false); err == nil {
+	if err := DeleteSession(dsn, "root", false, false, false); err == nil {
 		t.Fatal("expected non-recursive delete of session with children to fail")
 	}
 
-	if err := DeleteSession(dsn, "root", true); err != nil {
+	if err := DeleteSession(dsn, "root", true, false, false); err != nil {
 		t.Fatalf("DeleteSession recursive error: %v", err)
 	}
 
@@ -480,7 +480,7 @@ func TestDeleteSessionNonRecursive(t *testing.T) {
 		t.Fatalf("SetValue error: %v", err)
 	}
 
-	if err := DeleteSession(dsn, "root", false); err != nil {
+	if err := DeleteSession(dsn, "root", false, false, false); err != nil {
 		t.Fatalf("DeleteSession error: %v", err)
 	}
 
@@ -490,5 +490,82 @@ func TestDeleteSessionNonRecursive(t *testing.T) {
 	}
 	if _, ok := cf.Sessions["root"]; ok {
 		t.Fatal("root still exists after delete")
+	}
+}
+
+func TestDeleteSessionNonRecursiveNoVar(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_delete_novar.db")
+
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	if err := SetValue(dsn, "root", "KEY", "value"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	if err := DeleteSession(dsn, "root", false, true, false); err == nil {
+		t.Fatal("expected --no-var delete of session with variables to fail")
+	}
+
+	if err := DeleteSession(dsn, "root", false, false, false); err != nil {
+		t.Fatalf("DeleteSession error: %v", err)
+	}
+}
+
+// TestDeleteSessionRecursivePrune builds:
+//
+//	root
+//	 |- a (has var)
+//	 |   `- a1 (empty)
+//	 `- b (empty)
+//	     `- b1 (has var)
+//
+// With --recursive --no-var --no-child, only the fully empty leaf a1 qualifies
+// for deletion bottom-up: b1 is kept for its variable, which keeps b (its
+// parent) for still having a child, which in turn keeps root.
+func TestDeleteSessionRecursivePrune(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_delete_prune.db")
+
+	root := "root"
+	a, b := "a", "b"
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	if err := CreateSession(dsn, "a", &root); err != nil {
+		t.Fatalf("CreateSession a error: %v", err)
+	}
+	if err := CreateSession(dsn, "a1", &a); err != nil {
+		t.Fatalf("CreateSession a1 error: %v", err)
+	}
+	if err := CreateSession(dsn, "b", &root); err != nil {
+		t.Fatalf("CreateSession b error: %v", err)
+	}
+	if err := CreateSession(dsn, "b1", &b); err != nil {
+		t.Fatalf("CreateSession b1 error: %v", err)
+	}
+	if err := SetValue(dsn, "a", "KEY", "value"); err != nil {
+		t.Fatalf("SetValue a error: %v", err)
+	}
+	if err := SetValue(dsn, "b1", "KEY", "value"); err != nil {
+		t.Fatalf("SetValue b1 error: %v", err)
+	}
+
+	if err := DeleteSession(dsn, "root", true, true, true); err != nil {
+		t.Fatalf("DeleteSession prune error: %v", err)
+	}
+
+	cf, err := Load(dsn)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	for _, id := range []string{"root", "a", "b", "b1"} {
+		if _, ok := cf.Sessions[id]; !ok {
+			t.Fatalf("%s should not have been deleted", id)
+		}
+	}
+	if _, ok := cf.Sessions["a1"]; ok {
+		t.Fatal("a1 should have been deleted (empty leaf)")
 	}
 }
