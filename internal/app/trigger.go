@@ -537,7 +537,7 @@ func (a *App) executionSession(ctx context.Context, def TriggerDefinition, chang
 		return def.ExecutionSession, nil
 	}
 	parent := change.SessionID
-	id, err := a.CreateSession(ctx, "", &parent)
+	id, err := a.CreateSession(ctx, "", &parent, false)
 	if err != nil {
 		return "", err
 	}

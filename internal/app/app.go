@@ -68,9 +68,9 @@ func NewWithStore(s Store) *App {
 	}
 }
 
-func (a *App) CreateSession(ctx context.Context, customID string, explicitParent *string) (string, error) {
+func (a *App) CreateSession(ctx context.Context, customID string, explicitParent *string, root bool) (string, error) {
 	parentID := explicitParent
-	if parentID == nil {
+	if parentID == nil && !root {
 		if env := os.Getenv("CTX_ID"); env != "" {
 			parentID = &env
 		}

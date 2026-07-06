@@ -119,7 +119,7 @@ func TestCreateSessionUsesInjectedStore(t *testing.T) {
 	fake := &fakeStore{}
 	a := NewWithStore(fake)
 
-	id, err := a.CreateSession(context.Background(), "child", &parent)
+	id, err := a.CreateSession(context.Background(), "child", &parent, false)
 	if err != nil {
 		t.Fatalf("CreateSession error: %v", err)
 	}
@@ -128,6 +128,20 @@ func TestCreateSessionUsesInjectedStore(t *testing.T) {
 	}
 	if fake.parentID == nil || *fake.parentID != "root" {
 		t.Fatalf("parent = %v, want root", fake.parentID)
+	}
+}
+
+func TestCreateSessionRootIgnoresCTXID(t *testing.T) {
+	t.Setenv("CTX_ID", "env-parent")
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	_, err := a.CreateSession(context.Background(), "child", nil, true)
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	if fake.parentID != nil {
+		t.Fatalf("parent = %v, want nil (root)", fake.parentID)
 	}
 }
 
