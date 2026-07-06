@@ -55,7 +55,7 @@ go install github.com/daanvdh/ctx@latest
 
 | Command | Synopsis | Description |
 |---|---|---|
-| `ctx new [options] [custom_id]` | `ctx new`<br>`ctx new <parent-id>`<br>`ctx new my-custom-id`<br>`ctx new my-custom-id --parent <parent-id>`<br>`ctx new --help` | Create a new session. If a custom ID is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent can be set explicitly via `--parent`, or implicitly from the `CTX_ID` environment variable if present. Use `--help` for usage information. |
+| `ctx session [parent] [name] [--parent <p>\|--root]` | `ctx session`<br>`ctx session my-name`<br>`ctx session parent-id my-name`<br>`ctx session --parent <parent-id>`<br>`ctx session --root`<br>`ctx session --help` | Create a new session. If a name is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent defaults to the `CTX_ID` environment variable, or the tree root if unset; it can be overridden with a leading positional argument or `--parent`, or forced to the root with `--root`. `--parent`/`--root` and a positional parent are mutually exclusive. Use `--help` for usage information. |
 | `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store a scalar string under *key* in the specified session (overwrites existing key). |
 | `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx show` and `ctx tree`. |
 | `ctx set [session] <key> --path <path>` | `ctx set $SID API_SPEC --path ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
@@ -70,7 +70,7 @@ go install github.com/daanvdh/ctx@latest
 | `ctx --version` | `ctx --version` | Print the build version. |
 | `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
 
-**Note:** If `CTX_ID` is set in the environment, commands that take a session can omit that argument. `ctx new` uses `CTX_ID` as the implicit parent when no `--parent` flag is provided.
+**Note:** If `CTX_ID` is set in the environment, commands that take a session can omit that argument. `ctx session` uses `CTX_ID` as the implicit parent unless a parent is given explicitly or `--root` is passed.
 
 All commands exit with status 0 on success; error details are written to **stderr**.
 
@@ -184,11 +184,11 @@ The environment variable `CTX_ID` can be used as the default session for command
 
 ```bash
 # Create a root session and export its ID.
-ROOT=$(ctx new)               # prints e.g. "a1b2c3d4"
+ROOT=$(ctx session --root)    # prints e.g. "a1b2c3d4"
 export CTX_ID=$ROOT           # make it available to subsequent commands
 
 # Create a child session with a custom name; parent defaults to $CTX_ID.
-CHILD=$(ctx new review-agent)
+CHILD=$(ctx session review-agent)
 
 # Commands can now omit the session argument.
 ctx set PROJECT_ID "gitlab-org/myproject"
@@ -200,15 +200,15 @@ If you need to override the implicit parent, use `--parent`:
 
 ```bash
 export CTX_ID=$ROOT
-CHILD=$(ctx new lint-agent --parent $ROOT)   # explicit parent flag takes precedence
+CHILD=$(ctx session lint-agent --parent $ROOT)   # explicit parent flag takes precedence
 ```
 
-Remember to **export** the variable; otherwise it is only set for a single command and will not be visible to subsequent `ctx new` invocations.
+Remember to **export** the variable; otherwise it is only set for a single command and will not be visible to subsequent `ctx session` invocations.
 
 ```bash
 # Orchestrator creates a root session and a child.
-ROOT=$(ctx new)               # => e.g. "5f2a1c9b"
-CHILD=$(ctx new $ROOT)
+ROOT=$(ctx session --root)    # => e.g. "5f2a1c9b"
+CHILD=$(ctx session --parent $ROOT)
 
 # Store data in the hierarchy.
 ctx set $ROOT PROJECT_ID "gitlab-org/myproject"

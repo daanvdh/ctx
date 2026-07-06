@@ -565,7 +565,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		if p, ok := optionalString(args, "parent"); ok {
 			parent = &p
 		}
-		id, err := a.CreateSession(ctx, stringArg(args, "id"), parent)
+		id, err := a.CreateSession(ctx, stringArg(args, "id"), parent, false)
 		if err != nil {
 			return toolError(err), nil
 		}

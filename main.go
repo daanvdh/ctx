@@ -12,7 +12,7 @@ var version = "dev"
 
 func main() {
 	commands := map[string]cmd.Command{
-		"new":     {Name: "new", Run: cmd.New},
+		"session": {Name: "session", Run: cmd.Session},
 		"set":     {Name: "set", Run: cmd.Set},
 		"rm":      {Name: "rm", Run: cmd.Rm},
 		"get":     {Name: "get", Run: cmd.Get},
