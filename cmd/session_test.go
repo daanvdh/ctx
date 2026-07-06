@@ -103,17 +103,17 @@ func TestParseSessionArgsMissingParentValue(t *testing.T) {
 }
 
 func TestParseSessionRmArgsSession(t *testing.T) {
-	target, recursive, err := parseSessionRmArgs([]string{"mysession"})
+	target, recursive, noVar, noChild, err := parseSessionRmArgs([]string{"mysession"})
 	if err != nil {
 		t.Fatalf("parseSessionRmArgs error: %v", err)
 	}
-	if target != "mysession" || recursive {
-		t.Fatalf("parseSessionRmArgs = %q, %v, want mysession, false", target, recursive)
+	if target != "mysession" || recursive || noVar || noChild {
+		t.Fatalf("parseSessionRmArgs = %q, %v, %v, %v, want mysession, false, false, false", target, recursive, noVar, noChild)
 	}
 }
 
 func TestParseSessionRmArgsRecursive(t *testing.T) {
-	target, recursive, err := parseSessionRmArgs([]string{"mysession", "--recursive"})
+	target, recursive, _, _, err := parseSessionRmArgs([]string{"mysession", "--recursive"})
 	if err != nil {
 		t.Fatalf("parseSessionRmArgs error: %v", err)
 	}
@@ -122,15 +122,25 @@ func TestParseSessionRmArgsRecursive(t *testing.T) {
 	}
 }
 
+func TestParseSessionRmArgsNoVarNoChild(t *testing.T) {
+	target, recursive, noVar, noChild, err := parseSessionRmArgs([]string{"mysession", "--recursive", "--no-var", "--no-child"})
+	if err != nil {
+		t.Fatalf("parseSessionRmArgs error: %v", err)
+	}
+	if target != "mysession" || !recursive || !noVar || !noChild {
+		t.Fatalf("parseSessionRmArgs = %q, %v, %v, %v, want mysession, true, true, true", target, recursive, noVar, noChild)
+	}
+}
+
 func TestParseSessionRmArgsTooManyPositional(t *testing.T) {
-	if _, _, err := parseSessionRmArgs([]string{"a", "b"}); err == nil {
+	if _, _, _, _, err := parseSessionRmArgs([]string{"a", "b"}); err == nil {
 		t.Fatal("expected error for too many positional arguments")
 	}
 }
 
 func TestParseSessionRmArgsMissingSession(t *testing.T) {
 	t.Setenv("CTX_ID", "")
-	if _, _, err := parseSessionRmArgs(nil); err == nil {
+	if _, _, _, _, err := parseSessionRmArgs(nil); err == nil {
 		t.Fatal("expected error when no session given and CTX_ID unset")
 	}
 }

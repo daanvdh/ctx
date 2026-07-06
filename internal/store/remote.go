@@ -233,7 +233,12 @@ func (s *RemoteStore) SessionNodes(ctx context.Context) ([]model.SessionNode, er
 	return nodes, nil
 }
 
-func (s *RemoteStore) DeleteSession(ctx context.Context, sessionID string, recursive bool) error {
-	_, err := s.call(ctx, "ctx_delete", map[string]any{"session_id": sessionID, "recursive": recursive})
+func (s *RemoteStore) DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error {
+	_, err := s.call(ctx, "ctx_delete", map[string]any{
+		"session_id": sessionID,
+		"recursive":  recursive,
+		"no_var":     noVar,
+		"no_child":   noChild,
+	})
 	return err
 }

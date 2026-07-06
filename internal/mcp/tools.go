@@ -44,7 +44,9 @@ func tools() []map[string]any {
 		}, []string{"session_id", "key"}),
 		tool("ctx_delete", "Delete a session. Fails if it has child sessions unless recursive is set.", map[string]any{
 			"session_id": stringSchema("Session id."),
-			"recursive":  boolSchema("Also delete all descendant sessions."),
+			"recursive":  boolSchema("Also delete all descendant sessions, bottom-up."),
+			"no_var":     boolSchema("Fail (non-recursive) or skip (recursive) sessions that have variables."),
+			"no_child":   boolSchema("Recursive only: skip sessions that still have children after the bottom-up pass."),
 		}, []string{"session_id"}),
 		tool("ctx_execute", "Execute a trigger template from the ctx trigger directory.", map[string]any{
 			"session_id": stringSchema("Session id."),

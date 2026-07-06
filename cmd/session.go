@@ -12,7 +12,7 @@ func Session(ctx context.Context, args []string) error {
 
 	if helpRequested(args) {
 		fmt.Println(`Usage: ctx session [parent] [name] [--parent <parent-id> | --root]
-       ctx session rm <session> [--recursive]
+       ctx session rm <session> [--recursive] [--no-var] [--no-child]
 
 Create a new session. If name is omitted, a random ID is generated.
 By default the session is a child of $CTX_ID, or created at the tree root if CTX_ID is unset.
@@ -23,7 +23,9 @@ Use "ctx session --help" to display this help message.
 
 "ctx session rm" deletes the specified session and its variables. It fails if the
 session has child sessions, unless --recursive is given, in which case all
-descendants are deleted too. Use "ctx session rm --help" for details.`)
+descendants are deleted too, bottom-up. --no-var and --no-child skip nodes
+that still have variables or children instead of deleting them.
+Use "ctx session rm --help" for details.`)
 		return nil
 	}
 
@@ -105,15 +107,22 @@ func parseSessionArgs(args []string) (sessionArgs, error) {
 
 func sessionRm(ctx context.Context, args []string) error {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx session rm <session> [--recursive]
+		fmt.Println(`Usage: ctx session rm <session> [--recursive] [--no-var] [--no-child]
 
-Delete the specified session and its variables. Fails if the session has
-child sessions, unless --recursive is given, in which case the session and
-all its descendants (and their variables) are deleted.`)
+Delete the specified session and its variables.
+
+Non-recursive (default): fails if the session has child sessions.
+--no-var additionally fails if the session has variables.
+--no-child is accepted but ignored (already the default).
+
+--recursive deletes the session and all its descendants, bottom-up.
+--no-var skips (keeps) any node in the subtree that has variables.
+--no-child skips (keeps) any node that still has children after the
+bottom-up pass. Combining both prunes: only fully empty nodes are removed.`)
 		return nil
 	}
 
-	target, recursive, err := parseSessionRmArgs(args)
+	target, recursive, noVar, noChild, err := parseSessionRmArgs(args)
 	if err != nil {
 		return err
 	}
@@ -122,25 +131,30 @@ all its descendants (and their variables) are deleted.`)
 	if err != nil {
 		return err
 	}
-	return a.DeleteSession(ctx, target, recursive)
+	return a.DeleteSession(ctx, target, recursive, noVar, noChild)
 }
 
-func parseSessionRmArgs(args []string) (target string, recursive bool, err error) {
+func parseSessionRmArgs(args []string) (target string, recursive, noVar, noChild bool, err error) {
 	var positional []string
 	for _, arg := range args {
-		if arg == "--recursive" {
+		switch arg {
+		case "--recursive":
 			recursive = true
-		} else {
+		case "--no-var":
+			noVar = true
+		case "--no-child":
+			noChild = true
+		default:
 			positional = append(positional, arg)
 		}
 	}
 	if len(positional) > 1 {
-		return "", false, usage("session rm", "ctx session rm <session> [--recursive]")
+		return "", false, false, false, usage("session rm", "ctx session rm <session> [--recursive] [--no-var] [--no-child]")
 	}
 
 	target, err = sessionArg(positional, len(positional) == 1)
 	if err != nil {
-		return "", false, err
+		return "", false, false, false, err
 	}
-	return target, recursive, nil
+	return target, recursive, noVar, noChild, nil
 }
