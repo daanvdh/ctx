@@ -11,14 +11,14 @@ import (
 // Execute handles the `ctx execute <session> <template>` command.
 // It loads a template file from $HOME/.config/ctx/triggers/<template>,
 // substitutes placeholders ($VAR) using session variables (including ancestors),
-// and runs the specified command with the rendered prompt as a quoted argument.
+// and runs the specified script with the rendered prompt as a quoted argument.
 func Execute(ctx context.Context, args []string) error {
 	if helpRequested(args) {
 		fmt.Println(`Usage: ctx execute <session> <template>
 
 Execute a stored trigger template. The template must be placed in $HOME/.config/ctx/triggers/<template>.
 The frontmatter (before the optional --- separator) is YAML. Example:`)
-		fmt.Println("    command: pi        # Program invoked with the rendered prompt.")
+		fmt.Println("    script: pi        # Program invoked with the rendered prompt.")
 		fmt.Println(`---
 <prompt text possibly containing placeholders like $VAR>`)
 		return nil

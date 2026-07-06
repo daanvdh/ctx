@@ -442,7 +442,7 @@ func TestTriggerTemplatePathFindsExtension(t *testing.T) {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
 	want := filepath.Join(triggerDir, "test.md")
-	if err := os.WriteFile(want, []byte("command: echo\n---\nhello"), 0o644); err != nil {
+	if err := os.WriteFile(want, []byte("script: echo\n---\nhello"), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
 
@@ -618,7 +618,7 @@ func TestTriggerDefinitionAncestorCombinesWithEntries(t *testing.T) {
 }
 
 func TestParseTriggerAncestor(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command: echo\nancestor: root\n")
+	def, err := parseTriggerDefinition("test.md", "script: echo\nancestor: root\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestParseTriggerAncestor(t *testing.T) {
 }
 
 func TestParseTriggerRejectsAnyChangeWithAncestor(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change: true\nancestor: root\ncommand: echo\n---\nhello")
+	_, err := parseTriggerDefinition("test.md", "any-change: true\nancestor: root\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected any-change with ancestor to fail")
 	}
@@ -657,21 +657,21 @@ func TestAncestorSetWalksParentChain(t *testing.T) {
 func strPtr(s string) *string { return &s }
 
 func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change: true\nentries:\n  STATUS:\ncommand: echo\n---\nhello")
+	_, err := parseTriggerDefinition("test.md", "any-change: true\nentries:\n  STATUS:\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected any-change with entries to fail")
 	}
 }
 
 func TestParseTriggerRequiresIntegerOrder(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "order: first\ncommand: echo\n---\nhello")
+	_, err := parseTriggerDefinition("test.md", "order: first\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected non-integer order to fail")
 	}
 }
 
 func TestTriggerOrderDefaultsToZero(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command: echo\n---\nhello")
+	def, err := parseTriggerDefinition("test.md", "script: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestTriggerOrderDefaultsToZero(t *testing.T) {
 }
 
 func TestParseTriggerExecutionSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "execution-session: worker\ncommand: echo\n---\nhello")
+	def, err := parseTriggerDefinition("test.md", "execution-session: worker\nscript: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestParseTriggerExecutionSession(t *testing.T) {
 }
 
 func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command: echo\nentries:\n  STATUS:")
+	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -701,7 +701,7 @@ func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
 }
 
 func TestParseTriggerEntriesWildcard(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command: echo\nentries:\n  STATUS:\n  NOTE:\n")
+	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:\n  NOTE:\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -714,7 +714,7 @@ func TestParseTriggerEntriesWildcard(t *testing.T) {
 }
 
 func TestParseTriggerEntriesWithValues(t *testing.T) {
-	content := "command: echo\nentries:\n  STATUS:\n    - value: \"DONE\"\n    - value: \"CANCELLED\"\n"
+	content := "script: echo\nentries:\n  STATUS:\n    - value: \"DONE\"\n    - value: \"CANCELLED\"\n"
 	def, err := parseTriggerDefinition("test.md", content)
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
@@ -725,24 +725,24 @@ func TestParseTriggerEntriesWithValues(t *testing.T) {
 }
 
 func TestParseTriggerSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "command: echo\nsession: my-session\n")
+	def, err := parseTriggerDefinition("test.md", "script: echo\ntrigger-session: my-session\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
-	if def.Session != "my-session" {
-		t.Fatalf("Session = %q, want my-session", def.Session)
+	if def.TriggerSession != "my-session" {
+		t.Fatalf("TriggerSession = %q, want my-session", def.TriggerSession)
 	}
 }
 
 func TestParseTriggerScheduleRequiresSession(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\ncommand: echo\n")
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nscript: echo\n")
 	if err == nil {
 		t.Fatal("expected schedule without session to fail")
 	}
 }
 
 func TestParseTriggerSchedule(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\nsession: my-session\ncommand: echo\n")
+	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\ntrigger-session: my-session\nscript: echo\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -805,7 +805,7 @@ func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\ncommand: /bin/echo\n---\nCheck $STATUS"
+	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo\n---\nCheck $STATUS"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -837,7 +837,7 @@ func TestRunScheduledTriggersSkipsWhenNotDueOrEntriesMismatch(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\ncommand: /bin/echo\n---\nCheck $STATUS"
+	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo\n---\nCheck $STATUS"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -863,14 +863,14 @@ func TestRunScheduledTriggersSkipsWhenNotDueOrEntriesMismatch(t *testing.T) {
 	}
 }
 
-func TestParseTriggerMultilineCommand(t *testing.T) {
-	content := "command: |\n  git pull\n  git status\n"
+func TestParseTriggerMultilineScript(t *testing.T) {
+	content := "script: |\n  git pull\n  git status\n"
 	def, err := parseTriggerDefinition("test.md", content)
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
-	if want := "git pull\ngit status\n"; def.Command != want {
-		t.Fatalf("Command = %q, want %q", def.Command, want)
+	if want := "git pull\ngit status\n"; def.Script != want {
+		t.Fatalf("Script = %q, want %q", def.Script, want)
 	}
 }
 
@@ -881,7 +881,7 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/echo\n---\nStory $STORY"
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo\n---\nStory $STORY"
 	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -927,7 +927,7 @@ func TestSetValueExecutesTriggerWithoutPromptArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/sh " + scriptPath + " " + outPath
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/sh " + scriptPath + " " + outPath
 	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -965,7 +965,7 @@ func TestExecuteRunsTriggerWithoutPromptArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command: /bin/sh " + scriptPath + " " + outPath
+	trigger := "script: /bin/sh " + scriptPath + " " + outPath
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1000,7 +1000,7 @@ func TestExecutePreservesQuotedCommandArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command: /bin/sh " + scriptPath + " " + outPath + ` "success 1"`
+	trigger := "script: /bin/sh " + scriptPath + " " + outPath + ` "success 1"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1035,7 +1035,7 @@ func TestExecuteRendersCommandPlaceholders(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command: /bin/sh " + scriptPath + " " + outPath + ` "$exe"`
+	trigger := "script: /bin/sh " + scriptPath + " " + outPath + ` "$exe"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1070,7 +1070,7 @@ func TestExecuteRepeatedPlaceholderReusesPositionalIndex(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "command: /bin/sh " + scriptPath + " " + outPath + ` "$TITLE" "$TITLE"`
+	trigger := "script: /bin/sh " + scriptPath + " " + outPath + ` "$TITLE" "$TITLE"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1105,7 +1105,7 @@ func TestSetValueTriggerPreservesQuotedCommandArg(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/sh " + scriptPath + " " + outPath + ` "success 1"`
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/sh " + scriptPath + " " + outPath + ` "success 1"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1143,7 +1143,7 @@ func TestSetValueTriggerRendersCommandPlaceholders(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "args.txt")
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\ncommand: /bin/sh " + scriptPath + " " + outPath + ` "$exe"`
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/sh " + scriptPath + " " + outPath + ` "$exe"`
 	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1174,7 +1174,7 @@ func TestExecuteRejectsInvalidScript(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := `command: echo "unterminated`
+	trigger := `script: echo "unterminated`
 	if err := os.WriteFile(filepath.Join(triggerDir, "bad.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1287,7 +1287,7 @@ func TestMultilineCommandExecutesAllLines(t *testing.T) {
 	if err := os.WriteFile(scriptB, []byte("#!/bin/sh\nprintf 'second\\n' >> \"$1\"\n"), 0o755); err != nil {
 		t.Fatalf("write scriptB: %v", err)
 	}
-	trigger := "command: |\n  /bin/sh " + scriptA + " " + outPath + "\n  /bin/sh " + scriptB + " " + outPath + "\n"
+	trigger := "script: |\n  /bin/sh " + scriptA + " " + outPath + "\n  /bin/sh " + scriptB + " " + outPath + "\n"
 	if err := os.WriteFile(filepath.Join(triggerDir, "multi.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1325,7 +1325,7 @@ func TestMultilineScriptNativeShellVarPersists(t *testing.T) {
 	}
 	// A real shell assignment (not ctx set) should persist natively across
 	// the rest of the same script, without being written to the ctx store.
-	trigger := "command: |\n  MSG=hello\n  /bin/sh " + scriptPath + " \"$MSG\" " + outPath + "\n"
+	trigger := "script: |\n  MSG=hello\n  /bin/sh " + scriptPath + " \"$MSG\" " + outPath + "\n"
 	if err := os.WriteFile(filepath.Join(triggerDir, "assign.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
