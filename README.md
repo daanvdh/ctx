@@ -235,9 +235,9 @@ ctx get $CHILD REPORT --path           # prints /tmp/report.txt
 Manual templates and automatic triggers use YAML files in the trigger directory. The frontmatter (before the optional `---` separator) is YAML; everything after `---` is the prompt template.
 
 ```yaml
-session: Issue-1
+trigger-session: Issue-1
 order: 0
-command: pi
+script: pi
 entries:
   status:
     - value: PR_CREATED
@@ -247,7 +247,7 @@ Analyse and comment on PR $PR_NUMBER:
 $STORY
 ```
 
-`command` is required. `session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
+`script` is required. `trigger-session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
 
 **`ancestor` matching** – `ancestor: <session>` requires that `<session>` is an ancestor of the triggering session (found by walking its parent chain), based on an exact ID match. It's optional and ANDs with the other matchers; leave it unset to match any ancestor (or none).
 
@@ -275,10 +275,10 @@ entries:
 ---
 ```
 
-**Multi-line commands** – use a YAML block literal (`|`) to run the whole block as a single POSIX shell script (via [`mvdan/sh`](https://github.com/mvdan/sh)). `$VAR` placeholders naming a known ctx value are resolved once up front and bound as positional parameters; any other `$VAR` (e.g. one the script assigns itself, like `ID=$(...)`) is left for the shell to resolve natively, so ordinary shell variables persist across the whole script. Use `ctx set` from within the script to persist a value beyond its lifetime.
+**Multi-line scripts** – use a YAML block literal (`|`) to run the whole block as a single POSIX shell script (via [`mvdan/sh`](https://github.com/mvdan/sh)). `$VAR` placeholders naming a known ctx value are resolved once up front and bound as positional parameters; any other `$VAR` (e.g. one the script assigns itself, like `ID=$(...)`) is left for the shell to resolve natively, so ordinary shell variables persist across the whole script. Use `ctx set` from within the script to persist a value beyond its lifetime.
 
 ```yaml
-command: |
+script: |
   git checkout main
   git pull
   pi
@@ -286,14 +286,14 @@ command: |
 Summarise recent changes for $PROJECT.
 ```
 
-When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session: <session>` to run the command with a specific existing session instead.
+When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked script, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session: <session>` to run the script with a specific existing session instead.
 
-**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of (or in addition to) a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` requires `session` to be set (a schedule tick has no triggering session to infer one from); `ancestor` and `entries` still apply, checked against the session's current values. Nothing runs schedules automatically — invoke `ctx tick` periodically, e.g. from a crontab entry:
+**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of (or in addition to) a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` requires `trigger-session` to be set (a schedule tick has no triggering session to infer one from); `ancestor` and `entries` still apply, checked against the session's current values. Nothing runs schedules automatically — invoke `ctx tick` periodically, e.g. from a crontab entry:
 
 ```yaml
-session: root
+trigger-session: root
 schedule: "*/15 * * * *"   # every 15 minutes
-command: pi
+script: pi
 ---
 Check for updates on $PROJECT.
 ```

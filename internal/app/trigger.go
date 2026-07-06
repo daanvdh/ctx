@@ -33,13 +33,13 @@ type TriggerChange struct {
 type TriggerDefinition struct {
 	Name             string
 	Path             string
-	Session          string
+	TriggerSession   string
 	Ancestor         string
 	Entries          map[string][]string // key -> accepted values; nil/empty slice = wildcard
 	AnyChange        bool
 	Order            int
 	ExecutionSession string
-	Command          string
+	Script           string
 	PromptTemplate   string
 	Schedule         string
 }
@@ -64,8 +64,8 @@ type triggerEntryValue struct {
 
 // triggerFileData is the YAML structure for the trigger frontmatter.
 type triggerFileData struct {
-	Command          string                         `yaml:"command"`
-	Session          string                         `yaml:"session"`
+	Script           string                         `yaml:"script"`
+	TriggerSession   string                         `yaml:"trigger-session"`
 	Ancestor         string                         `yaml:"ancestor"`
 	AnyChange        bool                           `yaml:"any-change"`
 	Order            int                            `yaml:"order"`
@@ -126,18 +126,18 @@ func (a *App) RunScheduledTriggers(ctx context.Context, now time.Time) error {
 			continue
 		}
 
-		vars, err := a.store.Resolve(ctx, def.Session)
+		vars, err := a.store.Resolve(ctx, def.TriggerSession)
 		if err != nil {
 			return err
 		}
-		ancestors, err := a.ancestorSet(ctx, def.Session)
+		ancestors, err := a.ancestorSet(ctx, def.TriggerSession)
 		if err != nil {
 			return err
 		}
 		if !def.matchesScheduleFilters(vars, ancestors) {
 			continue
 		}
-		bySession[def.Session] = append(bySession[def.Session], def)
+		bySession[def.TriggerSession] = append(bySession[def.TriggerSession], def)
 	}
 
 	for sessionID, matching := range bySession {
@@ -247,14 +247,14 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: %w", path, err)
 	}
 
-	if data.Command == "" {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: missing command", path)
+	if data.Script == "" {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: missing script", path)
 	}
-	if data.AnyChange && (data.Session != "" || data.Ancestor != "" || len(data.Entries) > 0) {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with session, ancestor, or entries", path)
+	if data.AnyChange && (data.TriggerSession != "" || data.Ancestor != "" || len(data.Entries) > 0) {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with trigger-session, ancestor, or entries", path)
 	}
-	if data.Schedule != "" && data.Session == "" {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires session to be set", path)
+	if data.Schedule != "" && data.TriggerSession == "" {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires trigger-session to be set", path)
 	}
 
 	entries := make(map[string][]string, len(data.Entries))
@@ -269,13 +269,13 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	return TriggerDefinition{
 		Name:             strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
 		Path:             path,
-		Session:          data.Session,
+		TriggerSession:   data.TriggerSession,
 		Ancestor:         data.Ancestor,
 		Entries:          entries,
 		AnyChange:        data.AnyChange,
 		Order:            data.Order,
 		ExecutionSession: data.ExecutionSession,
-		Command:          data.Command,
+		Script:           data.Script,
 		PromptTemplate:   promptTemplate,
 		Schedule:         data.Schedule,
 	}, nil
@@ -288,10 +288,10 @@ func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string,
 	if d.AnyChange {
 		return true, nil
 	}
-	if d.Session == "" && d.Ancestor == "" && len(d.Entries) == 0 {
+	if d.TriggerSession == "" && d.Ancestor == "" && len(d.Entries) == 0 {
 		return false, nil // manual only
 	}
-	if d.Session != "" && d.Session != change.SessionID {
+	if d.TriggerSession != "" && d.TriggerSession != change.SessionID {
 		return false, nil
 	}
 	if d.Ancestor != "" && !ancestors[d.Ancestor] {
@@ -433,7 +433,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 
 	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
 	var outBuf, errBuf bytes.Buffer
-	exitCode, runErr := runScript(ctx, def.Command, renderedPrompt, vars, env, &outBuf, &errBuf)
+	exitCode, runErr := runScript(ctx, def.Script, renderedPrompt, vars, env, &outBuf, &errBuf)
 
 	errText := ""
 	if runErr != nil {

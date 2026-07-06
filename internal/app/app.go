@@ -437,8 +437,8 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 	}
 
 	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+sessionID)
-	if _, err := runScript(ctx, def.Command, renderedPrompt, vars, env, a.stdout, a.stderr); err != nil {
-		return fmt.Errorf("command execution failed: %w", err)
+	if _, err := runScript(ctx, def.Script, renderedPrompt, vars, env, a.stdout, a.stderr); err != nil {
+		return fmt.Errorf("script execution failed: %w", err)
 	}
 	return nil
 }
