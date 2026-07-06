@@ -638,7 +638,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]string{"text": text}
 	case "ctx_delete":
-		err := a.DeleteSessionTree(ctx, requiredString(args, "session_id"))
+		err := a.DeleteSession(ctx, requiredString(args, "session_id"), boolDefault(args, "recursive", false))
 		if err != nil {
 			return toolError(err), nil
 		}

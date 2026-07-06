@@ -56,6 +56,7 @@ go install github.com/daanvdh/ctx@latest
 | Command | Synopsis | Description |
 |---|---|---|
 | `ctx session [parent] [name] [--parent <p>\|--root]` | `ctx session`<br>`ctx session my-name`<br>`ctx session parent-id my-name`<br>`ctx session --parent <parent-id>`<br>`ctx session --root`<br>`ctx session --help` | Create a new session. If a name is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent defaults to the `CTX_ID` environment variable, or the tree root if unset; it can be overridden with a leading positional argument or `--parent`, or forced to the root with `--root`. `--parent`/`--root` and a positional parent are mutually exclusive. Use `--help` for usage information. |
+| `ctx session rm <session> [--recursive]` | `ctx session rm $SID`<br>`ctx session rm $SID --recursive` | Delete a session and its variables. Fails if the session has child sessions unless `--recursive` is given, in which case the session and all descendants (and their variables) are deleted. |
 | `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store a scalar string under *key* in the specified session (overwrites existing key). |
 | `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx show` and `ctx tree`. |
 | `ctx set [session] <key> --path <path>` | `ctx set $SID API_SPEC --path ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
@@ -172,7 +173,7 @@ Available tools:
 | `ctx_share` | Share one session's context into another session. |
 | `ctx_tree` | Render the complete session tree as text or JSON. |
 | `ctx_render` | Render a stored template key with visible context variables. |
-| `ctx_delete` | Delete a session and all descendants. |
+| `ctx_delete` | Delete a session. Fails if it has child sessions unless `recursive` is set. |
 | `ctx_execute` | Execute a trigger template from the ctx trigger directory. |
 
 The server uses the same settings and SQLite database as the CLI, so `db_path`

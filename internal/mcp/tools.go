@@ -42,8 +42,9 @@ func tools() []map[string]any {
 			"key":            stringSchema("Key containing the template."),
 			"ignore_missing": boolSchema("Leave missing placeholders unchanged instead of failing."),
 		}, []string{"session_id", "key"}),
-		tool("ctx_delete", "Delete a session and its descendants.", map[string]any{
+		tool("ctx_delete", "Delete a session. Fails if it has child sessions unless recursive is set.", map[string]any{
 			"session_id": stringSchema("Session id."),
+			"recursive":  boolSchema("Also delete all descendant sessions."),
 		}, []string{"session_id"}),
 		tool("ctx_execute", "Execute a trigger template from the ctx trigger directory.", map[string]any{
 			"session_id": stringSchema("Session id."),

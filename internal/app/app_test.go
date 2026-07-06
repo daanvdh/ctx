@@ -110,7 +110,7 @@ func (f *fakeStore) SessionNodes(context.Context) ([]model.SessionNode, error) {
 	return f.nodes, nil
 }
 
-func (f *fakeStore) DeleteSessionTree(context.Context, string) error {
+func (f *fakeStore) DeleteSession(context.Context, string, bool) error {
 	return f.err
 }
 
