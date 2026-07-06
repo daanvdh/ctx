@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ctx/internal/model"
+	"ctx/internal/session"
 )
 
 type fakeStore struct {
@@ -820,7 +821,7 @@ func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
 
 	foundLog := false
 	for key, value := range fake.values {
-		if strings.HasPrefix(key, "s1.trigger_log.") {
+		if strings.HasPrefix(key, "s1.trigger_log_") {
 			foundLog = strings.Contains(value, `"trigger":"poll"`) && strings.Contains(value, "Check ACTIVE")
 			break
 		}
@@ -828,6 +829,27 @@ func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
 	if !foundLog {
 		t.Fatalf("expected trigger log in values, got %#v", fake.values)
 	}
+}
+
+func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	err := a.writeTriggerLog(context.Background(), TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger.1"})
+	if err != nil {
+		t.Fatalf("writeTriggerLog error: %v", err)
+	}
+
+	for key := range fake.values {
+		if !strings.HasPrefix(key, "trigger_log_") {
+			continue
+		}
+		if !session.ValidShellKey(key) {
+			t.Fatalf("key %q is not a valid shell variable name", key)
+		}
+		return
+	}
+	t.Fatalf("expected a trigger_log key, got %#v", fake.values)
 }
 
 func TestRunScheduledTriggersSkipsWhenNotDueOrEntriesMismatch(t *testing.T) {
@@ -901,7 +923,7 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 
 	foundLog := false
 	for key, value := range fake.values {
-		if strings.HasPrefix(key, "s1.trigger_log.") {
+		if strings.HasPrefix(key, "s1.trigger_log_") {
 			foundLog = strings.Contains(value, `"trigger":"done"`) &&
 				strings.Contains(value, "Story ship it") &&
 				strings.Contains(value, `"execution_session":"`+fake.createdID+`"`)

@@ -549,6 +549,26 @@ func (a *App) writeTriggerLog(ctx context.Context, change TriggerChange, log tri
 	if err != nil {
 		return fmt.Errorf("encode trigger log: %w", err)
 	}
-	key := fmt.Sprintf("trigger_log.%d", time.Now().UnixNano())
+	now := time.Now()
+	timestamp := now.Format("060102150405") + fmt.Sprintf("%02d", now.Nanosecond()/1e7)
+	key := fmt.Sprintf("trigger_log_%s_%s", shellSafeIdentifier(log.Trigger), timestamp)
 	return a.store.SetValue(ctx, change.SessionID, key, string(data))
+}
+
+// shellSafeIdentifier rewrites s so it only contains characters valid in a
+// shell variable name, replacing anything else (including a leading digit)
+// with an underscore.
+func shellSafeIdentifier(s string) string {
+	b := make([]rune, 0, len(s))
+	for i, r := range s {
+		switch {
+		case r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
+			b = append(b, r)
+		case r >= '0' && r <= '9' && i > 0:
+			b = append(b, r)
+		default:
+			b = append(b, '_')
+		}
+	}
+	return string(b)
 }
