@@ -44,6 +44,12 @@ go install github.com/daanvdh/ctx@latest
   mcp_oauth_client_secret: long-random-secret
   ```
   Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
+- To use a remote ctx MCP server as the backend instead of a local sqlite db, set `remote_mcp_url` (and `remote_mcp_token` if the server requires a bearer token) in `settings.yml`:
+  ```yaml
+  remote_mcp_url: http://ctx-host:7331/mcp
+  remote_mcp_token: long-random-secret
+  ```
+  Every `ctx` command then talks to that server's `tools/call` endpoint instead of a local db. `ctx rm` and `ctx set --path` are not supported yet over a remote backend (the MCP protocol has no tool for them).
 
 ## Core Commands
 
@@ -280,6 +286,20 @@ Summarise recent changes for $PROJECT.
 ```
 
 When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked command, and writes a JSON audit record under `trigger_log.<timestamp>` in the triggering session. Use `execution-session: <session>` to run the command with a specific existing session instead.
+
+**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of (or in addition to) a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` requires `session` to be set (a schedule tick has no triggering session to infer one from); `ancestor` and `entries` still apply, checked against the session's current values. Nothing runs schedules automatically — invoke `ctx tick` periodically, e.g. from a crontab entry:
+
+```yaml
+session: root
+schedule: "*/15 * * * *"   # every 15 minutes
+command: pi
+---
+Check for updates on $PROJECT.
+```
+
+```
+* * * * * ctx tick
+```
 
 ## `ctx tree` output example
 

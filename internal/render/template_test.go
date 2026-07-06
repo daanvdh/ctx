@@ -78,6 +78,28 @@ func TestTemplateStringIgnoreMissing(t *testing.T) {
 	}
 }
 
+func TestTemplateStringRecursiveExpandsNestedPlaceholders(t *testing.T) {
+	resolved := map[string]string{"A": "$B", "B": "$C", "C": "done"}
+	got, err := TemplateStringRecursive("start $A", resolved, TemplateOptions{}, MaxRenderDepth)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "start done" {
+		t.Fatalf("got %q, want fully expanded nested placeholders", got)
+	}
+}
+
+func TestTemplateStringRecursiveStopsAtMaxDepthOnCycle(t *testing.T) {
+	resolved := map[string]string{"A": "$B", "B": "$A"}
+	got, err := TemplateStringRecursive("$A", resolved, TemplateOptions{}, MaxRenderDepth)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "$A" && got != "$B" {
+		t.Fatalf("got %q, want recursion to stop after MaxRenderDepth passes instead of looping forever", got)
+	}
+}
+
 func TestExtractVarNamesOrderAndDedup(t *testing.T) {
 	got := ExtractVarNames(`echo "$TITLE" $DESCRIPTION; echo again: "$TITLE"`)
 	want := []string{"TITLE", "DESCRIPTION"}

@@ -62,10 +62,8 @@ func Serve(ctx context.Context, args []string) error {
 }
 
 func parseServeArgs(args []string) (*serveOptions, error) {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			return parseServeArgsWithSettings(args, config.Settings{})
-		}
+	if helpRequested(args) {
+		return parseServeArgsWithSettings(args, config.Settings{})
 	}
 	settings, err := config.LoadSettings()
 	if err != nil {
@@ -75,15 +73,13 @@ func parseServeArgs(args []string) (*serveOptions, error) {
 }
 
 func parseServeArgsWithSettings(args []string, settings config.Settings) (*serveOptions, error) {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Println(`Usage: ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]
 
 Serve the ctx MCP server.
 
 By default, ctx serve uses MCP stdio transport. Use --http to serve Streamable HTTP.`)
-			return nil, nil
-		}
+		return nil, nil
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)

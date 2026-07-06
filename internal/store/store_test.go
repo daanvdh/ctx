@@ -194,6 +194,42 @@ func TestRemoveEntryDeletesSessionKey(t *testing.T) {
 	}
 }
 
+func TestRemoveEntryMatchesWildcard(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_remove_entry_wildcard.db")
+
+	if err := CreateSession(dsn, "s1", nil); err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	if err := SetValue(dsn, "s1", "trigger_log.1", "a"); err != nil {
+		t.Fatalf("SetValue trigger_log.1 error: %v", err)
+	}
+	if err := SetValue(dsn, "s1", "trigger_log.2", "b"); err != nil {
+		t.Fatalf("SetValue trigger_log.2 error: %v", err)
+	}
+	if err := SetValue(dsn, "s1", "KEEP", "yes"); err != nil {
+		t.Fatalf("SetValue KEEP error: %v", err)
+	}
+
+	if err := RemoveEntry(dsn, "s1", "*trigger_log*"); err != nil {
+		t.Fatalf("RemoveEntry error: %v", err)
+	}
+
+	if _, err := GetValue(dsn, "s1", "trigger_log.1"); err == nil {
+		t.Fatal("expected trigger_log.1 to be removed")
+	}
+	if _, err := GetValue(dsn, "s1", "trigger_log.2"); err == nil {
+		t.Fatal("expected trigger_log.2 to be removed")
+	}
+	got, err := GetValue(dsn, "s1", "KEEP")
+	if err != nil {
+		t.Fatalf("GetValue KEEP error: %v", err)
+	}
+	if got != "yes" {
+		t.Fatalf("KEEP = %q, want yes", got)
+	}
+}
+
 func TestRemoveEntryDoesNotRemoveAncestorKey(t *testing.T) {
 	tmp := t.TempDir()
 	dsn := filepath.Join(tmp, "test_remove_entry_ancestor.db")

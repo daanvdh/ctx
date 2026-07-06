@@ -45,6 +45,14 @@ type App struct {
 }
 
 func New() (*App, error) {
+	settings, err := config.LoadSettings()
+	if err != nil {
+		return nil, err
+	}
+	if settings.RemoteMCPURL != "" {
+		return NewWithStore(store.NewRemote(settings.RemoteMCPURL, settings.RemoteMCPToken)), nil
+	}
+
 	dbPath, err := config.DBPath()
 	if err != nil {
 		return nil, err
@@ -189,6 +197,14 @@ func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string,
 	return resolveEntries(entries, "resolve")
 }
 
+// ResolveEntries returns all visible entries for a session as stored
+// (doc values in full, file_ref values as their path, unlike Resolve which
+// reads file_ref content). Used by the ctx_resolve_entries MCP tool so a
+// remote-backed client can reconstruct typed entries.
+func (a *App) ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error) {
+	return a.store.ResolveEntries(ctx, sessionID)
+}
+
 func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths, quiet bool) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
@@ -224,15 +240,47 @@ func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAs
 	return lines, nil
 }
 
-func (a *App) Show(ctx context.Context, sessionID string) ([]string, error) {
+type ShowOptions struct {
+	Full   bool
+	Render bool
+}
+
+func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
+	var resolvedForRender map[string]string
+	if opts.Render {
+		resolvedForRender, err = resolveEntries(entries, "render")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	lines := make([]string, 0, len(entries))
 	for _, key := range sortedEntryKeys(entries) {
-		lines = append(lines, textutil.Line(key, entries[key]))
+		entry := entries[key]
+		if !opts.Full && !opts.Render {
+			lines = append(lines, textutil.Line(key, entry))
+			continue
+		}
+
+		content, err := resolveEntryContent(key, entry, "show")
+		if err != nil {
+			return nil, err
+		}
+		if opts.Render {
+			content, err = render.TemplateStringRecursive(content, resolvedForRender, render.TemplateOptions{}, render.MaxRenderDepth)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !opts.Full {
+			content = textutil.Preview(content, textutil.PreviewChars)
+		}
+		lines = append(lines, textutil.FullLine(key, entry, content))
 	}
 	return lines, nil
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ctx/internal/model"
 )
@@ -281,7 +282,7 @@ func TestSetDocRejectsTooLargeContent(t *testing.T) {
 
 func TestShow(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"B": "2", "A": "1"}})
-	lines, err := a.Show(context.Background(), "s1")
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
 	if err != nil {
 		t.Fatalf("Show error: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestShowFormatsFileRefAsPath(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1")
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
 	if err != nil {
 		t.Fatalf("Show error: %v", err)
 	}
@@ -317,7 +318,7 @@ func TestShowPreviewsFirstLine(t *testing.T) {
 		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1")
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
 	if err != nil {
 		t.Fatalf("Show error: %v", err)
 	}
@@ -327,6 +328,39 @@ func TestShowPreviewsFirstLine(t *testing.T) {
 	}
 	if !strings.Contains(got, "DOC [doc]") || !strings.Contains(got, "doc line") || !strings.Contains(got, "TEXT [string] text line") {
 		t.Fatalf("Show = %q, want doc and string previews", got)
+	}
+}
+
+func TestShowFullShowsUntruncatedContent(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"DOC": model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "DOC [doc] doc line\nhidden line"
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %q, want %q", strings.Join(lines, "\n"), want)
+	}
+}
+
+func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+		"NAME":     model.NewEntry("$FIRST $LAST", model.ValueTypeString),
+		"FIRST":    model.NewEntry("ada", model.ValueTypeString),
+		"LAST":     model.NewEntry("lovelace", model.ValueTypeString),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "GREETING [string] hello ada lovelace") {
+		t.Fatalf("Show = %q, want recursively rendered GREETING", got)
 	}
 }
 
@@ -683,6 +717,135 @@ func TestParseTriggerSession(t *testing.T) {
 	}
 	if def.Session != "my-session" {
 		t.Fatalf("Session = %q, want my-session", def.Session)
+	}
+}
+
+func TestParseTriggerScheduleRequiresSession(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\ncommand: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule without session to fail")
+	}
+}
+
+func TestParseTriggerSchedule(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\nsession: my-session\ncommand: echo\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
+	}
+	if def.Schedule != "*/15 * * * *" {
+		t.Fatalf("Schedule = %q, want */15 * * * *", def.Schedule)
+	}
+}
+
+func TestMatchesScheduleWildcardAlwaysMatches(t *testing.T) {
+	ok, err := matchesSchedule("* * * * *", time.Date(2026, 3, 5, 13, 37, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("matchesSchedule error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected wildcard schedule to always match")
+	}
+}
+
+func TestMatchesScheduleStepMatchesInterval(t *testing.T) {
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	notDue := time.Date(2026, 3, 5, 13, 31, 0, 0, time.UTC)
+
+	ok, err := matchesSchedule("*/15 * * * *", due)
+	if err != nil || !ok {
+		t.Fatalf("matchesSchedule(due) = %v, %v, want true, nil", ok, err)
+	}
+	ok, err = matchesSchedule("*/15 * * * *", notDue)
+	if err != nil || ok {
+		t.Fatalf("matchesSchedule(notDue) = %v, %v, want false, nil", ok, err)
+	}
+}
+
+func TestMatchesScheduleExactValueMatchesOnlyThatMoment(t *testing.T) {
+	ok, err := matchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 30, 0, 0, time.UTC))
+	if err != nil || !ok {
+		t.Fatalf("matchesSchedule(09:30) = %v, %v, want true, nil", ok, err)
+	}
+	ok, err = matchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 31, 0, 0, time.UTC))
+	if err != nil || ok {
+		t.Fatalf("matchesSchedule(09:31) = %v, %v, want false, nil", ok, err)
+	}
+}
+
+func TestMatchesScheduleRejectsWrongFieldCount(t *testing.T) {
+	if _, err := matchesSchedule("* * * *", time.Now()); err == nil {
+		t.Fatal("expected 4-field schedule to fail")
+	}
+}
+
+func TestMatchesScheduleRejectsOutOfRangeValue(t *testing.T) {
+	if _, err := matchesSchedule("99 * * * *", time.Now()); err == nil {
+		t.Fatal("expected out-of-range minute to fail")
+	}
+}
+
+func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\ncommand: /bin/echo\n---\nCheck $STATUS"
+	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"STATUS": "ACTIVE"}}
+	a := NewWithStore(fake)
+
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	if err := a.RunScheduledTriggers(context.Background(), due); err != nil {
+		t.Fatalf("RunScheduledTriggers error: %v", err)
+	}
+
+	foundLog := false
+	for key, value := range fake.values {
+		if strings.HasPrefix(key, "s1.trigger_log.") {
+			foundLog = strings.Contains(value, `"trigger":"poll"`) && strings.Contains(value, "Check ACTIVE")
+			break
+		}
+	}
+	if !foundLog {
+		t.Fatalf("expected trigger log in values, got %#v", fake.values)
+	}
+}
+
+func TestRunScheduledTriggersSkipsWhenNotDueOrEntriesMismatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\ncommand: /bin/echo\n---\nCheck $STATUS"
+	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	notDue := time.Date(2026, 3, 5, 13, 31, 0, 0, time.UTC)
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+
+	fake := &fakeStore{resolved: map[string]string{"STATUS": "INACTIVE"}}
+	a := NewWithStore(fake)
+
+	if err := a.RunScheduledTriggers(context.Background(), notDue); err != nil {
+		t.Fatalf("RunScheduledTriggers error: %v", err)
+	}
+	if len(fake.values) != 0 {
+		t.Fatalf("expected no trigger fire when not due, got %#v", fake.values)
+	}
+
+	if err := a.RunScheduledTriggers(context.Background(), due); err != nil {
+		t.Fatalf("RunScheduledTriggers error: %v", err)
+	}
+	if len(fake.values) != 0 {
+		t.Fatalf("expected no trigger fire when entries filter doesn't match, got %#v", fake.values)
 	}
 }
 

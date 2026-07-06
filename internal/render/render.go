@@ -35,6 +35,28 @@ func TemplateString(tmpl string, resolved map[string]string) (string, error) {
 	return TemplateStringWithOptions(tmpl, resolved, TemplateOptions{})
 }
 
+// MaxRenderDepth caps recursive placeholder expansion so a cyclical or
+// self-referential value can't loop forever.
+const MaxRenderDepth = 10
+
+// TemplateStringRecursive repeatedly substitutes $VAR placeholders, so a
+// resolved value that itself contains placeholders gets expanded too, up to
+// maxDepth passes or until a pass produces no further change.
+func TemplateStringRecursive(tmpl string, resolved map[string]string, opts TemplateOptions, maxDepth int) (string, error) {
+	out := tmpl
+	for i := 0; i < maxDepth; i++ {
+		next, err := TemplateStringWithOptions(out, resolved, opts)
+		if err != nil {
+			return "", err
+		}
+		if next == out {
+			return next, nil
+		}
+		out = next
+	}
+	return out, nil
+}
+
 type TemplateOptions struct {
 	IgnoreMissing bool
 }

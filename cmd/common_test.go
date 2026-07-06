@@ -2,6 +2,24 @@ package cmd
 
 import "testing"
 
+func TestHelpRequested(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"KEY", "VALUE"}, false},
+		{[]string{"--help"}, true},
+		{[]string{"-h"}, true},
+		{[]string{"session", "-h"}, true},
+	}
+	for _, c := range cases {
+		if got := helpRequested(c.args); got != c.want {
+			t.Fatalf("helpRequested(%v) = %v, want %v", c.args, got, c.want)
+		}
+	}
+}
+
 func TestSessionArgUsesExplicitSession(t *testing.T) {
 	t.Setenv("CTX_ID", "env")
 	got, err := sessionArg([]string{"explicit"}, true)

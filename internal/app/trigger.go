@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ type TriggerDefinition struct {
 	ExecutionSession string
 	Command          string
 	PromptTemplate   string
+	Schedule         string
 }
 
 type triggerLog struct {
@@ -69,6 +71,7 @@ type triggerFileData struct {
 	Order            int                            `yaml:"order"`
 	ExecutionSession string                         `yaml:"execution-session"`
 	Entries          map[string][]triggerEntryValue `yaml:"entries"`
+	Schedule         string                         `yaml:"schedule"`
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
@@ -97,6 +100,55 @@ func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange)
 		}
 		matching = append(matching, def)
 	}
+	return a.runTriggers(ctx, matching, change)
+}
+
+// RunScheduledTriggers executes every trigger whose schedule matches now,
+// provided its other filters (ancestor/entries) still hold against the
+// trigger's own session's current values. Intended to be invoked
+// periodically (e.g. from an OS crontab entry running `ctx tick`).
+func (a *App) RunScheduledTriggers(ctx context.Context, now time.Time) error {
+	defs, err := loadTriggerDefinitions()
+	if err != nil {
+		return err
+	}
+
+	bySession := map[string][]TriggerDefinition{}
+	for _, def := range defs {
+		if def.Schedule == "" {
+			continue
+		}
+		due, err := matchesSchedule(def.Schedule, now)
+		if err != nil {
+			return fmt.Errorf("trigger %s: %w", def.Name, err)
+		}
+		if !due {
+			continue
+		}
+
+		vars, err := a.store.Resolve(ctx, def.Session)
+		if err != nil {
+			return err
+		}
+		ancestors, err := a.ancestorSet(ctx, def.Session)
+		if err != nil {
+			return err
+		}
+		if !def.matchesScheduleFilters(vars, ancestors) {
+			continue
+		}
+		bySession[def.Session] = append(bySession[def.Session], def)
+	}
+
+	for sessionID, matching := range bySession {
+		if err := a.runTriggers(ctx, matching, TriggerChange{SessionID: sessionID}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) runTriggers(ctx context.Context, matching []TriggerDefinition, change TriggerChange) error {
 	sort.Slice(matching, func(i, j int) bool {
 		if matching[i].Order != matching[j].Order {
 			return matching[i].Order < matching[j].Order
@@ -201,6 +253,9 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if data.AnyChange && (data.Session != "" || data.Ancestor != "" || len(data.Entries) > 0) {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with session, ancestor, or entries", path)
 	}
+	if data.Schedule != "" && data.Session == "" {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires session to be set", path)
+	}
 
 	entries := make(map[string][]string, len(data.Entries))
 	for key, vals := range data.Entries {
@@ -222,6 +277,7 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		ExecutionSession: data.ExecutionSession,
 		Command:          data.Command,
 		PromptTemplate:   promptTemplate,
+		Schedule:         data.Schedule,
 	}, nil
 }
 
@@ -272,6 +328,84 @@ func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string,
 	}
 
 	return true, nil
+}
+
+// matchesScheduleFilters reports whether a schedule-driven fire should
+// proceed, checking the trigger's ancestor/entries filters against the
+// current resolved values of its own session (there is no "changed key"
+// for a schedule tick, so entries are matched by current value only,
+// unlike Matches).
+func (d TriggerDefinition) matchesScheduleFilters(vars map[string]string, ancestors map[string]bool) bool {
+	if d.Ancestor != "" && !ancestors[d.Ancestor] {
+		return false
+	}
+	for key, values := range d.Entries {
+		if len(values) == 0 {
+			continue // wildcard
+		}
+		matched := false
+		for _, v := range values {
+			if vars[key] == v {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesSchedule reports whether t falls within expr, a standard 5-field
+// cron expression (minute hour day-of-month month day-of-week), the same
+// format used by crontab(5), Kubernetes CronJob and GitHub Actions.
+//
+// ponytail: supports "*", exact values, comma-lists and "*/step"; no
+// hyphen ranges or named months/weekdays. Add if a trigger needs them.
+func matchesSchedule(expr string, t time.Time) (bool, error) {
+	fields := strings.Fields(expr)
+	if len(fields) != 5 {
+		return false, fmt.Errorf("schedule %q: want 5 fields (minute hour dom month dow), got %d", expr, len(fields))
+	}
+	values := [5]int{t.Minute(), t.Hour(), t.Day(), int(t.Month()), int(t.Weekday())}
+	maxes := [5]int{59, 23, 31, 12, 6}
+	for i, field := range fields {
+		ok, err := matchesCronField(field, values[i], maxes[i])
+		if err != nil {
+			return false, fmt.Errorf("schedule %q: %w", expr, err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func matchesCronField(field string, value, max int) (bool, error) {
+	for _, part := range strings.Split(field, ",") {
+		if part == "*" {
+			return true, nil
+		}
+		if step, ok := strings.CutPrefix(part, "*/"); ok {
+			n, err := strconv.Atoi(step)
+			if err != nil || n <= 0 {
+				return false, fmt.Errorf("invalid step %q", part)
+			}
+			if value%n == 0 {
+				return true, nil
+			}
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 || n > max {
+			return false, fmt.Errorf("invalid value %q (want 0-%d)", part, max)
+		}
+		if n == value {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change TriggerChange) error {

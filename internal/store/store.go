@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -418,13 +419,25 @@ func (s *SQLite) removeEntry(ctx context.Context, sessionID, key string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	result, err := tx.ExecContext(ctx, `DELETE FROM session_data WHERE session_id = ? AND key = ?`, sessionID, key)
-	if err != nil {
-		return fmt.Errorf("store: remove data %s.%s: %w", sessionID, key, err)
+	keys := []string{key}
+	if strings.ContainsAny(key, "*?[") {
+		keys, err = matchingKeys(ctx, tx, sessionID, key)
+		if err != nil {
+			return err
+		}
 	}
-	removed, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: inspect removed data %s.%s: %w", sessionID, key, err)
+
+	var removed int64
+	for _, k := range keys {
+		result, err := tx.ExecContext(ctx, `DELETE FROM session_data WHERE session_id = ? AND key = ?`, sessionID, k)
+		if err != nil {
+			return fmt.Errorf("store: remove data %s.%s: %w", sessionID, k, err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: inspect removed data %s.%s: %w", sessionID, k, err)
+		}
+		removed += n
 	}
 	if removed == 0 {
 		return fmt.Errorf("entry %s not found in session %s", key, sessionID)
@@ -434,6 +447,31 @@ func (s *SQLite) removeEntry(ctx context.Context, sessionID, key string) error {
 		return fmt.Errorf("store: commit transaction: %w", err)
 	}
 	return nil
+}
+
+func matchingKeys(ctx context.Context, tx *sql.Tx, sessionID, pattern string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT key FROM session_data WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list keys for %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	var matched []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("store: scan key for %s: %w", sessionID, err)
+		}
+		if ok, err := path.Match(pattern, k); err != nil {
+			return nil, fmt.Errorf("store: invalid pattern %s: %w", pattern, err)
+		} else if ok {
+			matched = append(matched, k)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate keys for %s: %w", sessionID, err)
+	}
+	return matched, nil
 }
 
 func GetValue(path, sessionID, key string) (string, error) {

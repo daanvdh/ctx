@@ -6,6 +6,15 @@ import (
 )
 
 func Get(ctx context.Context, args []string) error {
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx get [session_id] <key> [--path|--preview]
+
+Get a key's value from a session (or an ancestor). --path writes doc
+content to a temp file and prints its path; --preview prints a
+truncated preview instead of the full value.`)
+		return nil
+	}
+
 	asPath := false
 	preview := false
 	filtered := make([]string, 0, len(args))

@@ -598,7 +598,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]any{"values": values}
 	case "ctx_show":
-		lines, err := a.Show(ctx, requiredString(args, "session_id"))
+		lines, err := a.Show(ctx, requiredString(args, "session_id"), app.ShowOptions{})
 		if err != nil {
 			return toolError(err), nil
 		}
@@ -607,6 +607,12 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 			return toolError(err), nil
 		}
 		out = map[string]any{"lines": lines, "text": strings.Join(lines, "\n"), "entries": entries}
+	case "ctx_resolve_entries":
+		entries, err := a.ResolveEntries(ctx, requiredString(args, "session_id"))
+		if err != nil {
+			return toolError(err), nil
+		}
+		out = map[string]any{"entries": entries}
 	case "ctx_export":
 		lines, err := a.Export(ctx, requiredString(args, "session_id"), false, false, false)
 		if err != nil {
