@@ -67,8 +67,8 @@ func TestRemoteStoreRoundTrip(t *testing.T) {
 		t.Fatalf("SessionNodes = %v, %v, want 2 nodes", nodes, err)
 	}
 
-	if err := remote.DeleteSessionTree(ctx, "child"); err != nil {
-		t.Fatalf("DeleteSessionTree error: %v", err)
+	if err := remote.DeleteSession(ctx, "child", false); err != nil {
+		t.Fatalf("DeleteSession error: %v", err)
 	}
 	if _, err := remote.GetValue(ctx, "child", "NAME"); err == nil {
 		t.Fatal("expected GetValue on deleted session to fail")

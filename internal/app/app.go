@@ -35,7 +35,7 @@ type Store interface {
 	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
 	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
-	DeleteSessionTree(ctx context.Context, sessionID string) error
+	DeleteSession(ctx context.Context, sessionID string, recursive bool) error
 }
 
 type App struct {
@@ -406,8 +406,8 @@ func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing b
 	return render.TemplateStringWithOptions(template, resolved, render.TemplateOptions{IgnoreMissing: ignoreMissing})
 }
 
-func (a *App) DeleteSessionTree(ctx context.Context, sessionID string) error {
-	return a.store.DeleteSessionTree(ctx, sessionID)
+func (a *App) DeleteSession(ctx context.Context, sessionID string, recursive bool) error {
+	return a.store.DeleteSession(ctx, sessionID, recursive)
 }
 
 func (a *App) Execute(ctx context.Context, sessionID, templateName string) error {

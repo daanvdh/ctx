@@ -28,7 +28,7 @@ type Store interface {
 	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
 	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
 	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
-	DeleteSessionTree(ctx context.Context, sessionID string) error
+	DeleteSession(ctx context.Context, sessionID string, recursive bool) error
 }
 
 type SQLite struct {
@@ -728,17 +728,17 @@ func (s *SQLite) SessionNodes(ctx context.Context) ([]model.SessionNode, error) 
 	return nodes, nil
 }
 
-func DeleteSessionTree(path, sessionID string) error {
-	return NewSQLite(path).DeleteSessionTree(context.Background(), sessionID)
+func DeleteSession(path, sessionID string, recursive bool) error {
+	return NewSQLite(path).DeleteSession(context.Background(), sessionID, recursive)
 }
 
-func (s *SQLite) DeleteSessionTree(ctx context.Context, sessionID string) error {
+func (s *SQLite) DeleteSession(ctx context.Context, sessionID string, recursive bool) error {
 	return retryBusy(ctx, func() error {
-		return s.deleteSessionTree(ctx, sessionID)
+		return s.deleteSession(ctx, sessionID, recursive)
 	})
 }
 
-func (s *SQLite) deleteSessionTree(ctx context.Context, sessionID string) error {
+func (s *SQLite) deleteSession(ctx context.Context, sessionID string, recursive bool) error {
 	db, err := initDB(ctx, s.path)
 	if err != nil {
 		return err
@@ -757,6 +757,16 @@ func (s *SQLite) deleteSessionTree(ctx context.Context, sessionID string) error 
 	}
 	if exists == 0 {
 		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if !recursive {
+		var children int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE parent_id = ?`, sessionID).Scan(&children); err != nil {
+			return fmt.Errorf("store: check children of %s: %w", sessionID, err)
+		}
+		if children > 0 {
+			return fmt.Errorf("session %s has child sessions, use --recursive to delete them too", sessionID)
+		}
 	}
 
 	const descendants = `

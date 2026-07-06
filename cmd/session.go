@@ -6,15 +6,24 @@ import (
 )
 
 func Session(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "rm" {
+		return sessionRm(ctx, args[1:])
+	}
+
 	if helpRequested(args) {
 		fmt.Println(`Usage: ctx session [parent] [name] [--parent <parent-id> | --root]
+       ctx session rm <session> [--recursive]
 
 Create a new session. If name is omitted, a random ID is generated.
 By default the session is a child of $CTX_ID, or created at the tree root if CTX_ID is unset.
 A parent can be set explicitly as the first positional argument, or via --parent.
 --root forces the session to be created at the tree root, ignoring CTX_ID.
 --parent and --root are mutually exclusive, as are a positional parent and --parent.
-Use "ctx session --help" to display this help message.`)
+Use "ctx session --help" to display this help message.
+
+"ctx session rm" deletes the specified session and its variables. It fails if the
+session has child sessions, unless --recursive is given, in which case all
+descendants are deleted too. Use "ctx session rm --help" for details.`)
 		return nil
 	}
 
@@ -92,4 +101,46 @@ func parseSessionArgs(args []string) (sessionArgs, error) {
 	}
 
 	return sessionArgs{name: name, parent: flagParent, root: root}, nil
+}
+
+func sessionRm(ctx context.Context, args []string) error {
+	if helpRequested(args) {
+		fmt.Println(`Usage: ctx session rm <session> [--recursive]
+
+Delete the specified session and its variables. Fails if the session has
+child sessions, unless --recursive is given, in which case the session and
+all its descendants (and their variables) are deleted.`)
+		return nil
+	}
+
+	target, recursive, err := parseSessionRmArgs(args)
+	if err != nil {
+		return err
+	}
+
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	return a.DeleteSession(ctx, target, recursive)
+}
+
+func parseSessionRmArgs(args []string) (target string, recursive bool, err error) {
+	var positional []string
+	for _, arg := range args {
+		if arg == "--recursive" {
+			recursive = true
+		} else {
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) > 1 {
+		return "", false, usage("session rm", "ctx session rm <session> [--recursive]")
+	}
+
+	target, err = sessionArg(positional, len(positional) == 1)
+	if err != nil {
+		return "", false, err
+	}
+	return target, recursive, nil
 }

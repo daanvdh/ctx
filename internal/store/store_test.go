@@ -428,7 +428,7 @@ func TestSessionNodes(t *testing.T) {
 	}
 }
 
-func TestDeleteSessionTree(t *testing.T) {
+func TestDeleteSessionRecursive(t *testing.T) {
 	tmp := t.TempDir()
 	dsn := filepath.Join(tmp, "test_delete_tree.db")
 
@@ -446,8 +446,12 @@ func TestDeleteSessionTree(t *testing.T) {
 		t.Fatalf("SetValue error: %v", err)
 	}
 
-	if err := DeleteSessionTree(dsn, "root"); err != nil {
-		t.Fatalf("DeleteSessionTree error: %v", err)
+	if err := DeleteSession(dsn, "root", false); err == nil {
+		t.Fatal("expected non-recursive delete of session with children to fail")
+	}
+
+	if err := DeleteSession(dsn, "root", true); err != nil {
+		t.Fatalf("DeleteSession recursive error: %v", err)
 	}
 
 	cf, err := Load(dsn)
@@ -462,5 +466,29 @@ func TestDeleteSessionTree(t *testing.T) {
 	}
 	if _, ok := cf.Sessions["sibling"]; !ok {
 		t.Fatal("sibling should not be deleted")
+	}
+}
+
+func TestDeleteSessionNonRecursive(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_delete_leaf.db")
+
+	if err := CreateSession(dsn, "root", nil); err != nil {
+		t.Fatalf("CreateSession root error: %v", err)
+	}
+	if err := SetValue(dsn, "root", "KEY", "value"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+
+	if err := DeleteSession(dsn, "root", false); err != nil {
+		t.Fatalf("DeleteSession error: %v", err)
+	}
+
+	cf, err := Load(dsn)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if _, ok := cf.Sessions["root"]; ok {
+		t.Fatal("root still exists after delete")
 	}
 }

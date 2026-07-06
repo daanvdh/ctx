@@ -101,3 +101,36 @@ func TestParseSessionArgsMissingParentValue(t *testing.T) {
 		t.Fatal("expected error for missing --parent value")
 	}
 }
+
+func TestParseSessionRmArgsSession(t *testing.T) {
+	target, recursive, err := parseSessionRmArgs([]string{"mysession"})
+	if err != nil {
+		t.Fatalf("parseSessionRmArgs error: %v", err)
+	}
+	if target != "mysession" || recursive {
+		t.Fatalf("parseSessionRmArgs = %q, %v, want mysession, false", target, recursive)
+	}
+}
+
+func TestParseSessionRmArgsRecursive(t *testing.T) {
+	target, recursive, err := parseSessionRmArgs([]string{"mysession", "--recursive"})
+	if err != nil {
+		t.Fatalf("parseSessionRmArgs error: %v", err)
+	}
+	if target != "mysession" || !recursive {
+		t.Fatalf("parseSessionRmArgs = %q, %v, want mysession, true", target, recursive)
+	}
+}
+
+func TestParseSessionRmArgsTooManyPositional(t *testing.T) {
+	if _, _, err := parseSessionRmArgs([]string{"a", "b"}); err == nil {
+		t.Fatal("expected error for too many positional arguments")
+	}
+}
+
+func TestParseSessionRmArgsMissingSession(t *testing.T) {
+	t.Setenv("CTX_ID", "")
+	if _, _, err := parseSessionRmArgs(nil); err == nil {
+		t.Fatal("expected error when no session given and CTX_ID unset")
+	}
+}
