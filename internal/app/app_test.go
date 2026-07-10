@@ -839,7 +839,7 @@ func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo\n---\nCheck $STATUS"
+	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nCheck $STATUS"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -936,7 +936,7 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo\n---\nStory $STORY"
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nStory $STORY"
 	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}

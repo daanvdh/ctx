@@ -232,12 +232,12 @@ ctx get $CHILD REPORT --path           # prints /tmp/report.txt
 
 ## Trigger Templates
 
-Manual templates and automatic triggers use YAML files in the trigger directory. The frontmatter (before the optional `---` separator) is YAML; everything after `---` is the prompt template.
+Manual templates and automatic triggers use YAML files in the trigger directory. The frontmatter (before the optional `---` separator) is YAML; everything after `---` is the prompt template, rendered and passed to the script as `$CTX_TRIGGER_PROMPT` (see **Multi-variable bodies** below) — reference it explicitly in `script`, nothing is auto-appended.
 
 ```yaml
 trigger-session: Issue-1
 order: 0
-script: pi
+script: pi "$CTX_TRIGGER_PROMPT"
 entries:
   status:
     - value: PR_CREATED
@@ -281,7 +281,7 @@ entries:
 script: |
   git checkout main
   git pull
-  pi
+  pi "$CTX_TRIGGER_PROMPT"
 ---
 Summarise recent changes for $PROJECT.
 ```
@@ -306,14 +306,14 @@ Implement each step. Run tests after each change.
 Coordinate planner → coder to fix the failing tests in this PR.
 ```
 
-Trigger bodies with no markers continue to work unchanged: the whole body becomes `CTX_TRIGGER_PROMPT`, which is also still auto-appended as the last command's trailing argument when non-empty, exactly as before.
+Trigger bodies with no markers still parse the same way: the whole body becomes `CTX_TRIGGER_PROMPT`. Existing trigger files that relied on the old implicit trailing-argument behavior now need `script` to reference `"$CTX_TRIGGER_PROMPT"` explicitly, as in the examples above.
 
 **`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of (or in addition to) a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` requires `trigger-session` to be set (a schedule tick has no triggering session to infer one from); `ancestor` and `entries` still apply, checked against the session's current values. Nothing runs schedules automatically — invoke `ctx tick` periodically, e.g. from a crontab entry:
 
 ```yaml
 trigger-session: root
 schedule: "*/15 * * * *"   # every 15 minutes
-script: pi
+script: pi "$CTX_TRIGGER_PROMPT"
 ---
 Check for updates on $PROJECT.
 ```

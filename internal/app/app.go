@@ -440,7 +440,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
-	if _, err := runScript(ctx, def.Script, triggerVars["CTX_TRIGGER_PROMPT"], vars, triggerVars, env, a.stdout, a.stderr); err != nil {
+	if _, err := runScript(ctx, def.Script, vars, triggerVars, env, a.stdout, a.stderr); err != nil {
 		return fmt.Errorf("script execution failed: %w", err)
 	}
 	return nil

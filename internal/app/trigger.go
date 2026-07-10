@@ -478,7 +478,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		env = append(env, name+"="+value)
 	}
 	var outBuf, errBuf bytes.Buffer
-	exitCode, runErr := runScript(ctx, def.Script, triggerVars["CTX_TRIGGER_PROMPT"], vars, triggerVars, env, &outBuf, &errBuf)
+	exitCode, runErr := runScript(ctx, def.Script, vars, triggerVars, env, &outBuf, &errBuf)
 
 	errText := ""
 	if runErr != nil {
@@ -506,13 +506,12 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 // values (e.g. a variable the script assigns itself, like STORY_ID=$(...))
 // are left untouched for the shell to resolve natively. Names present in
 // triggerVars are always skipped here and left for the shell to resolve
-// from env instead, so a trigger-defined variable takes precedence over a
-// ctx session value of the same name. If prompt is non-empty, it is bound
-// as one more trailing positional parameter and referenced at the end of
-// the (trimmed) script, mirroring the old behavior of appending it to the
-// last command's arguments.
+// from env instead, so a trigger-defined variable (including
+// CTX_TRIGGER_PROMPT) takes precedence over a ctx session value of the same
+// name, and reaches the script only if it's referenced explicitly -- nothing
+// is auto-appended.
 // Output is written to stdout and stderr writers.
-func runScript(ctx context.Context, command, prompt string, vars map[string]string, triggerVars map[string]string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
+func runScript(ctx context.Context, command string, vars map[string]string, triggerVars map[string]string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
 	indices := make(map[string]int)
 	args := make([]string, 0)
 	for _, name := range render.ExtractVarNames(command) {
@@ -528,10 +527,6 @@ func runScript(ctx context.Context, command, prompt string, vars map[string]stri
 	}
 
 	script := render.RewriteVars(command, indices)
-	if prompt != "" {
-		args = append(args, prompt)
-		script = fmt.Sprintf("%s \"$%d\"", strings.TrimRight(script, "\n"), len(args))
-	}
 
 	file, err := syntax.NewParser().Parse(strings.NewReader(script), "")
 	if err != nil {
