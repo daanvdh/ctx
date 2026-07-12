@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -281,6 +282,47 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	}, nil
 }
 
+// triggerVarMarkerRe matches a "<!-- ctx:var NAME -->" block marker.
+var triggerVarMarkerRe = regexp.MustCompile(`<!--\s*ctx:var\s+([A-Za-z_][A-Za-z0-9_]*)\s*-->`)
+
+// parseTriggerVars splits a trigger body into named variable blocks,
+// delimited by "<!-- ctx:var NAME -->" markers: each marker starts a new
+// block running until the next marker (or EOF), with surrounding blank
+// lines trimmed. Content before the first marker (or the whole body, if
+// there are no markers) is assigned to CTX_TRIGGER_PROMPT.
+func parseTriggerVars(body string) map[string]string {
+	matches := triggerVarMarkerRe.FindAllStringSubmatchIndex(body, -1)
+	if len(matches) == 0 {
+		return map[string]string{"CTX_TRIGGER_PROMPT": strings.TrimSpace(body)}
+	}
+
+	vars := map[string]string{"CTX_TRIGGER_PROMPT": strings.TrimSpace(body[:matches[0][0]])}
+	for i, m := range matches {
+		name := body[m[2]:m[3]]
+		end := len(body)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		vars[name] = strings.TrimSpace(body[m[1]:end])
+	}
+	return vars
+}
+
+// renderTriggerVars parses body into named variable blocks (see
+// parseTriggerVars) and renders each block's $VAR placeholders against vars.
+func renderTriggerVars(body string, vars map[string]string) (map[string]string, error) {
+	blocks := parseTriggerVars(body)
+	rendered := make(map[string]string, len(blocks))
+	for name, raw := range blocks {
+		value, err := render.TemplateString(raw, vars)
+		if err != nil {
+			return nil, err
+		}
+		rendered[name] = value
+	}
+	return rendered, nil
+}
+
 // Matches reports whether this trigger should fire for the given change.
 // vars contains the fully resolved current values for the triggering session.
 // ancestors contains the IDs of the triggering session's ancestors (not including itself).
@@ -417,7 +459,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	if err != nil {
 		return err
 	}
-	renderedPrompt, err := render.TemplateString(def.PromptTemplate, vars)
+	triggerVars, err := renderTriggerVars(def.PromptTemplate, vars)
 	if err != nil {
 		return a.writeTriggerLog(ctx, change, triggerLog{
 			Trigger:          def.Name,
@@ -432,8 +474,11 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	}
 
 	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
+	for name, value := range triggerVars {
+		env = append(env, name+"="+value)
+	}
 	var outBuf, errBuf bytes.Buffer
-	exitCode, runErr := runScript(ctx, def.Script, renderedPrompt, vars, env, &outBuf, &errBuf)
+	exitCode, runErr := runScript(ctx, def.Script, vars, triggerVars, env, &outBuf, &errBuf)
 
 	errText := ""
 	if runErr != nil {
@@ -459,15 +504,20 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 // once as an opaque positional parameter ($1..$N); the script text only ever
 // sees $1, $2, etc. in their place. $NAME references that aren't known ctx
 // values (e.g. a variable the script assigns itself, like STORY_ID=$(...))
-// are left untouched for the shell to resolve natively. If prompt is
-// non-empty, it is bound as one more trailing positional parameter and
-// referenced at the end of the (trimmed) script, mirroring the old behavior
-// of appending it to the last command's arguments.
+// are left untouched for the shell to resolve natively. Names present in
+// triggerVars are always skipped here and left for the shell to resolve
+// from env instead, so a trigger-defined variable (including
+// CTX_TRIGGER_PROMPT) takes precedence over a ctx session value of the same
+// name, and reaches the script only if it's referenced explicitly -- nothing
+// is auto-appended.
 // Output is written to stdout and stderr writers.
-func runScript(ctx context.Context, command, prompt string, vars map[string]string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
+func runScript(ctx context.Context, command string, vars map[string]string, triggerVars map[string]string, env []string, stdout, stderr io.Writer) (exitCode int, err error) {
 	indices := make(map[string]int)
 	args := make([]string, 0)
 	for _, name := range render.ExtractVarNames(command) {
+		if _, isTriggerVar := triggerVars[name]; isTriggerVar {
+			continue
+		}
 		value, ok := vars[name]
 		if !ok {
 			continue
@@ -477,10 +527,6 @@ func runScript(ctx context.Context, command, prompt string, vars map[string]stri
 	}
 
 	script := render.RewriteVars(command, indices)
-	if prompt != "" {
-		args = append(args, prompt)
-		script = fmt.Sprintf("%s \"$%d\"", strings.TrimRight(script, "\n"), len(args))
-	}
 
 	file, err := syntax.NewParser().Parse(strings.NewReader(script), "")
 	if err != nil {

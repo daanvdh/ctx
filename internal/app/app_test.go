@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -701,6 +702,38 @@ func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
 	}
 }
 
+func TestParseTriggerVarsNoMarkersAssignsWholeBodyToTriggerPrompt(t *testing.T) {
+	got := parseTriggerVars("\n\nhello $NAME\n\n")
+	want := map[string]string{"CTX_TRIGGER_PROMPT": "hello $NAME"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseTriggerVars = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseTriggerVarsSplitsOnMarkers(t *testing.T) {
+	body := "intro text\n<!-- ctx:var CTX_AGENTS -->\n## planner\ndo stuff\n\n<!-- ctx:var CTX_PROMPT -->\nfix the bug\n"
+	got := parseTriggerVars(body)
+	want := map[string]string{
+		"CTX_TRIGGER_PROMPT": "intro text",
+		"CTX_AGENTS":         "## planner\ndo stuff",
+		"CTX_PROMPT":         "fix the bug",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseTriggerVars = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseTriggerVarsEmptyBeforeFirstMarker(t *testing.T) {
+	body := "<!-- ctx:var CTX_PROMPT -->\nfix the bug\n"
+	got := parseTriggerVars(body)
+	if got["CTX_TRIGGER_PROMPT"] != "" {
+		t.Fatalf("CTX_TRIGGER_PROMPT = %q, want empty", got["CTX_TRIGGER_PROMPT"])
+	}
+	if got["CTX_PROMPT"] != "fix the bug" {
+		t.Fatalf("CTX_PROMPT = %q, want %q", got["CTX_PROMPT"], "fix the bug")
+	}
+}
+
 func TestParseTriggerEntriesWildcard(t *testing.T) {
 	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:\n  NOTE:\n")
 	if err != nil {
@@ -806,7 +839,7 @@ func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo\n---\nCheck $STATUS"
+	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nCheck $STATUS"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -903,7 +936,7 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo\n---\nStory $STORY"
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nStory $STORY"
 	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1110,6 +1143,84 @@ func TestExecuteRepeatedPlaceholderReusesPositionalIndex(t *testing.T) {
 	}
 	if got := string(data); got != "3\nhello world\nhello world\n" {
 		t.Fatalf("args output = %q, want repeated placeholder bound to same positional index", got)
+	}
+}
+
+func TestExecuteExposesNamedVarBlocksAsEnvWithoutAutoAppend(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "capture-env.sh")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$#\" \"$CTX_AGENTS\" \"$CTX_PROMPT\" > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "out.txt")
+	trigger := "script: /bin/sh " + scriptPath + " " + outPath +
+		"\n---\n<!-- ctx:var CTX_AGENTS -->\nplanner\n\n<!-- ctx:var CTX_PROMPT -->\nfix $BUG\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"BUG": "the flaky test"}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "manual"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	// "$#" == 1 (only outPath) proves CTX_TRIGGER_PROMPT (empty here) was
+	// not auto-appended as a positional arg; the named blocks still reach
+	// the script, but only via env.
+	if got, want := string(data), "1\nplanner\nfix the flaky test\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestExecuteTriggerVarTakesPrecedenceOverCtxSessionVar(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "capture-args.sh")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n' \"$#\" \"$2\" > \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	outPath := filepath.Join(t.TempDir(), "out.txt")
+	// $CTX_PROMPT appears directly in the script line, same mechanism as
+	// $VAR ctx-session placeholders. There is also a ctx-session value
+	// named CTX_PROMPT; the trigger var block must win.
+	trigger := "script: /bin/sh " + scriptPath + " " + outPath + ` "$CTX_PROMPT"` +
+		"\n---\n<!-- ctx:var CTX_PROMPT -->\nfrom trigger body\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "manual.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"CTX_PROMPT": "from ctx session"}}
+	a := NewWithStore(fake)
+
+	if err := a.Execute(context.Background(), "s1", "manual"); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if got, want := string(data), "2\nfrom trigger body\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
