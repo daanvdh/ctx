@@ -7,16 +7,18 @@ import (
 
 func Get(ctx context.Context, args []string) error {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx get [session_id] <key> [--path|--preview]
+		fmt.Println(`Usage: ctx get [session_id] <key> [--raw] [--path|--preview]
 
-Get a key's value from a session (or an ancestor). --path writes doc
-content to a temp file and prints its path; --preview prints a
-truncated preview instead of the full value.`)
+Get a key's value from a session (or an ancestor), rendering $VAR
+placeholders by default. --raw returns the unrendered value. --path
+writes doc content to a temp file and prints its path (always raw);
+--preview prints a truncated preview instead of the full value.`)
 		return nil
 	}
 
 	asPath := false
 	preview := false
+	raw := false
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
@@ -24,6 +26,8 @@ truncated preview instead of the full value.`)
 			asPath = true
 		case "--preview":
 			preview = true
+		case "--raw":
+			raw = true
 		default:
 			filtered = append(filtered, arg)
 		}
@@ -32,7 +36,7 @@ truncated preview instead of the full value.`)
 		return fmt.Errorf("--path and --preview are mutually exclusive")
 	}
 	if len(filtered) != 1 && len(filtered) != 2 {
-		return usage("get", "ctx get [session_id] <key> [--path|--preview]")
+		return usage("get", "ctx get [session_id] <key> [--raw] [--path|--preview]")
 	}
 
 	hasSession := len(filtered) == 2
@@ -51,12 +55,15 @@ truncated preview instead of the full value.`)
 		return err
 	}
 	var value string
-	if asPath {
+	switch {
+	case asPath:
 		value, err = a.GetPath(ctx, sessionID, key)
-	} else if preview {
-		value, err = a.GetPreview(ctx, sessionID, key)
-	} else {
+	case preview:
+		value, err = a.GetPreview(ctx, sessionID, key, raw)
+	case raw:
 		value, err = a.GetValue(ctx, sessionID, key)
+	default:
+		value, err = a.GetRendered(ctx, sessionID, key)
 	}
 	if err != nil {
 		return err

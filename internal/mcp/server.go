@@ -583,7 +583,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 	case "ctx_get":
 		var value string
 		if boolDefault(args, "preview", false) {
-			value, err = a.GetPreview(ctx, requiredString(args, "session_id"), requiredString(args, "key"))
+			value, err = a.GetPreview(ctx, requiredString(args, "session_id"), requiredString(args, "key"), true)
 		} else {
 			value, err = a.GetValue(ctx, requiredString(args, "session_id"), requiredString(args, "key"))
 		}

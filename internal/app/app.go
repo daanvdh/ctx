@@ -143,6 +143,25 @@ func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, erro
 	return resolveEntryContent(key, entry, "get")
 }
 
+// GetRendered returns a key's value with $VAR placeholders substituted
+// recursively from the session's visible context, matching the rendering
+// ctx list --full performs.
+func (a *App) GetRendered(ctx context.Context, sessionID, key string) (string, error) {
+	content, err := a.GetValue(ctx, sessionID, key)
+	if err != nil {
+		return "", err
+	}
+	entries, err := a.store.ResolveEntries(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := resolveEntries(entries, "render")
+	if err != nil {
+		return "", err
+	}
+	return render.TemplateStringRecursive(content, resolved, render.TemplateOptions{}, render.MaxRenderDepth)
+}
+
 func (a *App) GetPath(ctx context.Context, sessionID, key string) (string, error) {
 	entry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
@@ -177,8 +196,14 @@ func (a *App) GetPath(ctx context.Context, sessionID, key string) (string, error
 	}
 }
 
-func (a *App) GetPreview(ctx context.Context, sessionID, key string) (string, error) {
-	value, err := a.GetValue(ctx, sessionID, key)
+func (a *App) GetPreview(ctx context.Context, sessionID, key string, raw bool) (string, error) {
+	var value string
+	var err error
+	if raw {
+		value, err = a.GetValue(ctx, sessionID, key)
+	} else {
+		value, err = a.GetRendered(ctx, sessionID, key)
+	}
 	if err != nil {
 		return "", err
 	}
