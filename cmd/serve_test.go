@@ -118,3 +118,32 @@ func TestParseServeArgsRejectsExtraArgs(t *testing.T) {
 		t.Fatal("expected extra argument error")
 	}
 }
+
+func TestParseServeArgsStdioFlag(t *testing.T) {
+	opts, err := parseServeArgsWithSettings([]string{"--stdio"}, config.Settings{})
+	if err != nil {
+		t.Fatalf("parseServeArgs error: %v", err)
+	}
+	if !opts.stdioMode {
+		t.Fatal("stdioMode = false, want true")
+	}
+	if opts.httpMode {
+		t.Fatal("httpMode = true, want false")
+	}
+}
+
+func TestParseServeArgsRejectsHTTPAndStdioTogether(t *testing.T) {
+	if _, err := parseServeArgsWithSettings([]string{"--http", "--stdio"}, config.Settings{}); err == nil {
+		t.Fatal("expected --http and --stdio together to error")
+	}
+}
+
+func TestParseServeArgsNeitherFlagSetsNeitherMode(t *testing.T) {
+	opts, err := parseServeArgsWithSettings(nil, config.Settings{})
+	if err != nil {
+		t.Fatalf("parseServeArgs error: %v", err)
+	}
+	if opts.httpMode || opts.stdioMode {
+		t.Fatalf("httpMode=%v stdioMode=%v, want both false", opts.httpMode, opts.stdioMode)
+	}
+}

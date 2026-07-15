@@ -104,51 +104,6 @@ func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange)
 	return a.runTriggers(ctx, matching, change)
 }
 
-// RunScheduledTriggers executes every trigger whose schedule matches now,
-// provided its other filters (ancestor/entries) still hold against the
-// trigger's own session's current values. Intended to be invoked
-// periodically (e.g. from an OS crontab entry running `ctx tick`).
-func (a *App) RunScheduledTriggers(ctx context.Context, now time.Time) error {
-	defs, err := loadTriggerDefinitions()
-	if err != nil {
-		return err
-	}
-
-	bySession := map[string][]TriggerDefinition{}
-	for _, def := range defs {
-		if def.Schedule == "" {
-			continue
-		}
-		due, err := matchesSchedule(def.Schedule, now)
-		if err != nil {
-			return fmt.Errorf("trigger %s: %w", def.Name, err)
-		}
-		if !due {
-			continue
-		}
-
-		vars, err := a.store.Resolve(ctx, def.TriggerSession)
-		if err != nil {
-			return err
-		}
-		ancestors, err := a.ancestorSet(ctx, def.TriggerSession)
-		if err != nil {
-			return err
-		}
-		if !def.matchesScheduleFilters(vars, ancestors) {
-			continue
-		}
-		bySession[def.TriggerSession] = append(bySession[def.TriggerSession], def)
-	}
-
-	for sessionID, matching := range bySession {
-		if err := a.runTriggers(ctx, matching, TriggerChange{SessionID: sessionID}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (a *App) runTriggers(ctx context.Context, matching []TriggerDefinition, change TriggerChange) error {
 	sort.Slice(matching, func(i, j int) bool {
 		if matching[i].Order != matching[j].Order {
@@ -254,8 +209,11 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if data.AnyChange && (data.TriggerSession != "" || data.Ancestor != "" || len(data.Entries) > 0) {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with trigger-session, ancestor, or entries", path)
 	}
-	if data.Schedule != "" && data.TriggerSession == "" {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires trigger-session to be set", path)
+	if data.Schedule != "" && (data.AnyChange || data.TriggerSession != "" || data.Ancestor != "" || len(data.Entries) > 0) {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule cannot be combined with any-change, trigger-session, ancestor, or entries", path)
+	}
+	if data.Schedule != "" && data.ExecutionSession == "" {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires execution-session to be set", path)
 	}
 
 	entries := make(map[string][]string, len(data.Entries))
@@ -370,33 +328,6 @@ func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string,
 	}
 
 	return true, nil
-}
-
-// matchesScheduleFilters reports whether a schedule-driven fire should
-// proceed, checking the trigger's ancestor/entries filters against the
-// current resolved values of its own session (there is no "changed key"
-// for a schedule tick, so entries are matched by current value only,
-// unlike Matches).
-func (d TriggerDefinition) matchesScheduleFilters(vars map[string]string, ancestors map[string]bool) bool {
-	if d.Ancestor != "" && !ancestors[d.Ancestor] {
-		return false
-	}
-	for key, values := range d.Entries {
-		if len(values) == 0 {
-			continue // wildcard
-		}
-		matched := false
-		for _, v := range values {
-			if vars[key] == v {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
-	}
-	return true
 }
 
 // matchesSchedule reports whether t falls within expr, a standard 5-field

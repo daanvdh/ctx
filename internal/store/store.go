@@ -71,7 +71,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
-	if current >= 4 {
+	if current >= 5 {
 		return nil
 	}
 
@@ -139,10 +139,69 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("store: record schema migration: %w", err)
 		}
 	}
+	if current < 5 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS trigger_schedule_state (
+        trigger_path TEXT PRIMARY KEY,
+        last_fired_at DATETIME NOT NULL
+    )`); err != nil {
+			return fmt.Errorf("store: create trigger_schedule_state table: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (5, ?)`, time.Now()); err != nil {
+			return fmt.Errorf("store: record schema migration: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit migration: %w", err)
 	}
 	return nil
+}
+
+// ClaimTriggerSchedule atomically claims triggerPath for dueAt: it succeeds
+// (returns true) only if no prior claim for this trigger is at or after
+// dueAt, recording dueAt as the new last_fired_at in the same transaction.
+// Uses a BEGIN IMMEDIATE transaction (via the _txlock=immediate DSN option)
+// so two ctx serve processes sharing one database can't both claim the same
+// due instant.
+func (s *SQLite) ClaimTriggerSchedule(ctx context.Context, triggerPath string, dueAt time.Time) (bool, error) {
+	var claimed bool
+	err := retryBusy(ctx, func() error {
+		var err error
+		claimed, err = s.claimTriggerSchedule(ctx, triggerPath, dueAt)
+		return err
+	})
+	return claimed, err
+}
+
+func (s *SQLite) claimTriggerSchedule(ctx context.Context, triggerPath string, dueAt time.Time) (bool, error) {
+	db, err := initDB(ctx, s.path+"?_txlock=immediate")
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: begin immediate transaction: %w", err)
+	}
+	defer rollback(tx)
+
+	var lastFired time.Time
+	err = tx.QueryRowContext(ctx, `SELECT last_fired_at FROM trigger_schedule_state WHERE trigger_path = ?`, triggerPath).Scan(&lastFired)
+	if err != nil && err != sql.ErrNoRows {
+		return false, fmt.Errorf("store: read trigger schedule state %s: %w", triggerPath, err)
+	}
+	if err == nil && !lastFired.Before(dueAt) {
+		return false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO trigger_schedule_state (trigger_path, last_fired_at) VALUES (?, ?)
+        ON CONFLICT(trigger_path) DO UPDATE SET last_fired_at = excluded.last_fired_at`, triggerPath, dueAt); err != nil {
+		return false, fmt.Errorf("store: claim trigger schedule %s: %w", triggerPath, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: commit trigger schedule claim: %w", err)
+	}
+	return true, nil
 }
 
 func columnExists(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {

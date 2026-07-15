@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -44,8 +45,98 @@ func TestMigrationRecordsSchemaVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("schema version = %d, want 4", version)
+	if version != 5 {
+		t.Fatalf("schema version = %d, want 5", version)
+	}
+}
+
+func TestClaimTriggerScheduleFirstClaimSucceeds(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_claim.db"))
+	dueAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	claimed, err := s.ClaimTriggerSchedule(context.Background(), "/triggers/poll.md", dueAt)
+	if err != nil {
+		t.Fatalf("ClaimTriggerSchedule error: %v", err)
+	}
+	if !claimed {
+		t.Fatal("claimed = false, want true for first claim")
+	}
+}
+
+func TestClaimTriggerScheduleSameOrEarlierDueAtFails(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_claim.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC)
+
+	if claimed, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v, want true, nil", claimed, err)
+	}
+
+	if claimed, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil {
+		t.Fatalf("same dueAt claim error: %v", err)
+	} else if claimed {
+		t.Fatal("same dueAt claim succeeded, want false (already claimed)")
+	}
+
+	earlier := dueAt.Add(-time.Minute)
+	if claimed, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", earlier); err != nil {
+		t.Fatalf("earlier dueAt claim error: %v", err)
+	} else if claimed {
+		t.Fatal("earlier dueAt claim succeeded, want false")
+	}
+}
+
+func TestClaimTriggerScheduleLaterDueAtSucceeds(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_claim.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC)
+
+	if claimed, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v, want true, nil", claimed, err)
+	}
+
+	later := dueAt.Add(time.Minute)
+	if claimed, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", later); err != nil {
+		t.Fatalf("later dueAt claim error: %v", err)
+	} else if !claimed {
+		t.Fatal("later dueAt claim failed, want true")
+	}
+}
+
+func TestClaimTriggerScheduleConcurrentClaimsOnlyOneWins(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_claim.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC)
+
+	const attempts = 8
+	results := make([]bool, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			claimed, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt)
+			if err != nil {
+				t.Errorf("claim %d error: %v", i, err)
+				return
+			}
+			results[i] = claimed
+		}(i)
+	}
+	wg.Wait()
+
+	wins := 0
+	for _, r := range results {
+		if r {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("wins = %d, want exactly 1", wins)
 	}
 }
 
