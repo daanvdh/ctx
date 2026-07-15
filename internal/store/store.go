@@ -14,7 +14,6 @@ import (
 )
 
 var ErrAlreadyExists = errors.New("session already exists")
-var ErrKeyNotFound = errors.New("not found")
 
 type Store interface {
 	Load(ctx context.Context) (*model.ContextFile, error)
@@ -514,7 +513,7 @@ func (s *SQLite) GetEntry(ctx context.Context, sessionID, key string) (model.Ent
 	var valueType model.ValueType
 	if err := db.QueryRowContext(ctx, query, sessionID, sessionID, key).Scan(&value, &valueType); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return model.Entry{}, fmt.Errorf("key %s %w in session %s or ancestors", key, ErrKeyNotFound, sessionID)
+			return model.Entry{}, fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
 		}
 		return model.Entry{}, fmt.Errorf("store: get data %s.%s: %w", sessionID, key, err)
 	}
@@ -864,10 +863,6 @@ func (s *SQLite) deleteSession(ctx context.Context, sessionID string, recursive,
 
 func IsAlreadyExists(err error) bool {
 	return errors.Is(err, ErrAlreadyExists)
-}
-
-func IsKeyNotFound(err error) bool {
-	return errors.Is(err, ErrKeyNotFound)
 }
 
 func rollback(tx *sql.Tx) {
