@@ -148,9 +148,9 @@ func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, erro
 // ctx list --full performs. file_ref entries reference files living outside
 // ctx and are returned unrendered, since their content wasn't authored with
 // ctx's $VAR syntax in mind and may contain it unintentionally. If
-// ignoreMissing is false and a placeholder can't be resolved, the returned
+// allowMissing is false and a placeholder can't be resolved, the returned
 // error suggests --allow-missing.
-func (a *App) GetRendered(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
+func (a *App) GetRendered(ctx context.Context, sessionID, key string, allowMissing bool) (string, error) {
 	entry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
@@ -171,7 +171,7 @@ func (a *App) GetRendered(ctx context.Context, sessionID, key string, ignoreMiss
 	if err != nil {
 		return "", err
 	}
-	rendered, err := render.TemplateStringRecursive(content, resolved, render.TemplateOptions{IgnoreMissing: ignoreMissing}, render.MaxRenderDepth)
+	rendered, err := render.TemplateStringRecursive(content, resolved, render.TemplateOptions{AllowMissing: allowMissing}, render.MaxRenderDepth)
 	if err != nil {
 		return "", fmt.Errorf("%w (use --allow-missing to leave unresolved placeholders unchanged)", err)
 	}
@@ -414,7 +414,7 @@ func filterTreeNodes(nodes []model.SessionNode, sessionID string) ([]model.Sessi
 	return out, nil
 }
 
-func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
+func (a *App) Render(ctx context.Context, sessionID, key string, allowMissing bool) (string, error) {
 	templateEntry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
@@ -431,7 +431,7 @@ func (a *App) Render(ctx context.Context, sessionID, key string, ignoreMissing b
 	if err != nil {
 		return "", err
 	}
-	return render.TemplateStringWithOptions(template, resolved, render.TemplateOptions{IgnoreMissing: ignoreMissing})
+	return render.TemplateStringWithOptions(template, resolved, render.TemplateOptions{AllowMissing: allowMissing})
 }
 
 func (a *App) DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error {

@@ -38,9 +38,9 @@ func tools() []map[string]any {
 			"session_id": stringSchema("Optional session id; scopes the tree to this session's ancestors and descendants."),
 		}, []string{}),
 		tool("ctx_render", "Render a stored template key by substituting $VAR placeholders from visible context.", map[string]any{
-			"session_id":     stringSchema("Session id."),
-			"key":            stringSchema("Key containing the template."),
-			"ignore_missing": boolSchema("Leave missing placeholders unchanged instead of failing."),
+			"session_id":    stringSchema("Session id."),
+			"key":           stringSchema("Key containing the template."),
+			"allow_missing": boolSchema("Leave missing placeholders unchanged instead of failing."),
 		}, []string{"session_id", "key"}),
 		tool("ctx_delete", "Delete a session. Fails if it has child sessions unless recursive is set.", map[string]any{
 			"session_id": stringSchema("Session id."),

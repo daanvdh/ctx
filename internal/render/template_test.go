@@ -68,8 +68,8 @@ func TestTemplateStringMissingPlaceholdersDeterministic(t *testing.T) {
 	}
 }
 
-func TestTemplateStringIgnoreMissing(t *testing.T) {
-	got, err := TemplateStringWithOptions("known $A missing $B", map[string]string{"A": "1"}, TemplateOptions{IgnoreMissing: true})
+func TestTemplateStringAllowMissing(t *testing.T) {
+	got, err := TemplateStringWithOptions("known $A missing $B", map[string]string{"A": "1"}, TemplateOptions{AllowMissing: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -549,7 +549,7 @@ func TestRenderResolvesDocAndFileRefContent(t *testing.T) {
 	}
 }
 
-func TestRenderIgnoreMissing(t *testing.T) {
+func TestRenderAllowMissing(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE for $OWNER"},
 		resolved: map[string]string{"ISSUE": "22"},

@@ -632,7 +632,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]string{"text": text}
 	case "ctx_render":
-		text, err := a.Render(ctx, requiredString(args, "session_id"), requiredString(args, "key"), boolDefault(args, "ignore_missing", false))
+		text, err := a.Render(ctx, requiredString(args, "session_id"), requiredString(args, "key"), boolDefault(args, "allow_missing", false))
 		if err != nil {
 			return toolError(err), nil
 		}
