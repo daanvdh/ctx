@@ -24,7 +24,6 @@ type ValueType string
 
 const (
 	ValueTypeString  ValueType = "string"
-	ValueTypeDoc     ValueType = "doc"
 	ValueTypeFileRef ValueType = "file_ref"
 	ValueTypeFileBin ValueType = "file_bin"
 )

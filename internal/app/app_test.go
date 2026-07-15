@@ -149,7 +149,7 @@ func TestCreateSessionRootIgnoresCTXID(t *testing.T) {
 
 func TestExportWarnsOnInvalidShellKey(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"1BAD": "value"}})
-	lines, err := a.Export(context.Background(), "s1", false, false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestExportWarnsOnInvalidShellKey(t *testing.T) {
 
 func TestExportQuietSkipsInvalidShellKey(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"1BAD": "value"}})
-	lines, err := a.Export(context.Background(), "s1", false, false, true)
+	lines, err := a.Export(context.Background(), "s1", false, true)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestExportQuietSkipsInvalidShellKey(t *testing.T) {
 
 func TestExportIncludesCTXID(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"KEY": "value"}})
-	lines, err := a.Export(context.Background(), "s1", false, false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
@@ -182,37 +182,36 @@ func TestExportIncludesCTXID(t *testing.T) {
 	}
 }
 
-func TestExportOmitsDocsAndFileRefsByDefault(t *testing.T) {
+func TestExportOmitsFileRefsByDefault(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"NAME": model.NewEntry("ctx", model.ValueTypeString),
-		"DOC":  model.NewEntry("long text", model.ValueTypeDoc),
+		"LONG": model.NewEntry("long text", model.ValueTypeString),
 		"SPEC": model.NewEntry("/tmp/spec.yaml", model.ValueTypeFileRef),
 	}})
-	lines, err := a.Export(context.Background(), "s1", false, false, false)
+	lines, err := a.Export(context.Background(), "s1", false, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if strings.Contains(got, "DOC=") || strings.Contains(got, "SPEC=") {
-		t.Fatalf("default export leaked doc/file_ref: %s", got)
+	if strings.Contains(got, "SPEC=") {
+		t.Fatalf("default export leaked file_ref: %s", got)
 	}
-	if !strings.Contains(got, "NAME='ctx'") {
-		t.Fatalf("export = %s, want scalar", got)
+	if !strings.Contains(got, "NAME='ctx'") || !strings.Contains(got, "LONG='long text'") {
+		t.Fatalf("export = %s, want string values included", got)
 	}
 }
 
-func TestExportIncludesDocsAndFilePathsWhenRequested(t *testing.T) {
+func TestExportIncludesFilePathsWhenRequested(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
-		"DOC":  model.NewEntry("don't split", model.ValueTypeDoc),
 		"SPEC": model.NewEntry("/tmp/spec.yaml", model.ValueTypeFileRef),
 	}})
-	lines, err := a.Export(context.Background(), "s1", true, true, false)
+	lines, err := a.Export(context.Background(), "s1", true, false)
 	if err != nil {
 		t.Fatalf("Export error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "DOC='don'\\''t split'") || !strings.Contains(got, "SPEC='/tmp/spec.yaml'") {
-		t.Fatalf("export = %s, want doc and file path", got)
+	if !strings.Contains(got, "SPEC='/tmp/spec.yaml'") {
+		t.Fatalf("export = %s, want file path", got)
 	}
 }
 
@@ -262,20 +261,20 @@ func TestSetFileRefStoresAbsolutePath(t *testing.T) {
 	}
 }
 
-func TestGetDocRawAndPreview(t *testing.T) {
+func TestGetStringRawAndPreview(t *testing.T) {
 	content := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n"
 	a := NewWithStore(&fakeStore{entries: map[string]model.Entry{
-		"DOC": model.NewEntry(content, model.ValueTypeDoc),
+		"TEXT": model.NewEntry(content, model.ValueTypeString),
 	}})
 
-	raw, err := a.GetRaw(context.Background(), "s1", "DOC")
+	raw, err := a.GetRaw(context.Background(), "s1", "TEXT")
 	if err != nil {
 		t.Fatalf("GetRaw error: %v", err)
 	}
 	if raw != content {
 		t.Fatalf("raw = %q, want %q", raw, content)
 	}
-	preview, err := a.GetPreview(context.Background(), "s1", "DOC", true)
+	preview, err := a.GetPreview(context.Background(), "s1", "TEXT", true)
 	if err != nil {
 		t.Fatalf("GetPreview error: %v", err)
 	}
@@ -416,27 +415,27 @@ func TestGetPreviewRendersByDefault(t *testing.T) {
 	}
 }
 
-func TestSetDocRejectsTooLargeContent(t *testing.T) {
+func TestSetStringRejectsTooLargeContent(t *testing.T) {
 	a := NewWithStore(&fakeStore{})
-	err := a.SetEntry(context.Background(), "s1", "DOC", model.NewEntry(strings.Repeat("x", MaxDocBytes+1), model.ValueTypeDoc))
-	if err == nil || !strings.Contains(err.Error(), "doc content exceeds 500KB") {
-		t.Fatalf("SetEntry error = %v, want doc size error", err)
+	err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry(strings.Repeat("x", MaxStringBytes+1), model.ValueTypeString))
+	if err == nil || !strings.Contains(err.Error(), "value exceeds 500KB") {
+		t.Fatalf("SetEntry error = %v, want size error", err)
 	}
 }
 
-func TestShow(t *testing.T) {
+func TestList(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"B": "2", "A": "1"}})
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
+	lines, err := a.List(context.Background(), "s1", ListOptions{})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
-	want := []string{"A [string] 1", "B [string] 2"}
+	want := []string{"A 1", "B 2"}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("Show = %v, want %v", lines, want)
+		t.Fatalf("List = %v, want %v", lines, want)
 	}
 }
 
-func TestShowFormatsFileRefAsPath(t *testing.T) {
+func TestListFormatsFileRefAsPath(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "spec.yaml")
 	if err := os.WriteFile(path, []byte("openapi: 3.0.0\n"), 0o644); err != nil {
@@ -446,51 +445,50 @@ func TestShowFormatsFileRefAsPath(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
+	lines, err := a.List(context.Background(), "s1", ListOptions{})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	want := "SPEC [path] " + path
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %v, want %q", lines, want)
+		t.Fatalf("List = %v, want %q", lines, want)
 	}
 }
 
-func TestShowPreviewsFirstLine(t *testing.T) {
+func TestListPreviewsFirstLine(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
-		"DOC":  model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
 		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
+	lines, err := a.List(context.Background(), "s1", ListOptions{})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
 	if strings.Contains(got, `\n`) || strings.Contains(got, "hidden line") {
-		t.Fatalf("Show = %q, want first-line previews only", got)
+		t.Fatalf("List = %q, want first-line previews only", got)
 	}
-	if !strings.Contains(got, "DOC [doc]") || !strings.Contains(got, "doc line") || !strings.Contains(got, "TEXT [string] text line") {
-		t.Fatalf("Show = %q, want doc and string previews", got)
+	if !strings.Contains(got, "TEXT text line") || strings.Contains(got, "TEXT [") {
+		t.Fatalf("List = %q, want string preview without a type label", got)
 	}
 }
 
-func TestShowFullShowsUntruncatedContent(t *testing.T) {
+func TestListFullShowsUntruncatedContent(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
-		"DOC": model.NewEntry("doc line\nhidden line", model.ValueTypeDoc),
+		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Full: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
-	want := "DOC [doc] doc line\nhidden line"
+	want := "TEXT text line\nhidden line"
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %q, want %q", strings.Join(lines, "\n"), want)
+		t.Fatalf("List = %q, want %q", strings.Join(lines, "\n"), want)
 	}
 }
 
-func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
+func TestListRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
 		"NAME":     model.NewEntry("$FIRST $LAST", model.ValueTypeString),
@@ -498,32 +496,32 @@ func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 		"LAST":     model.NewEntry("lovelace", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Render: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "GREETING [string] hello ada lovelace") {
-		t.Fatalf("Show = %q, want recursively rendered GREETING", got)
+	if !strings.Contains(got, "GREETING hello ada lovelace") {
+		t.Fatalf("List = %q, want recursively rendered GREETING", got)
 	}
 }
 
-func TestShowRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
+func TestListRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"GREETING": model.NewEntry("hello $NOPE", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Render: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if got != "GREETING [string] hello $NOPE" {
-		t.Fatalf("Show = %q, want unresolved placeholder left unchanged", got)
+	if got != "GREETING hello $NOPE" {
+		t.Fatalf("List = %q, want unresolved placeholder left unchanged", got)
 	}
 }
 
-func TestShowRenderSkipsFileRefContent(t *testing.T) {
+func TestListRenderSkipsFileRefContent(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "doc.txt")
 	if err := os.WriteFile(path, []byte("price: $5\n"), 0o644); err != nil {
@@ -533,17 +531,17 @@ func TestShowRenderSkipsFileRefContent(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true, Render: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Full: true, Render: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [file_ref] price: $5\n"
+	want := "SPEC [path] price: $5\n"
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
+		t.Fatalf("List = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
 	}
 }
 
-func TestShowFullRawShowsFileRefPath(t *testing.T) {
+func TestListFullRawShowsFileRefPath(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "doc.txt")
 	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
@@ -553,13 +551,13 @@ func TestShowFullRawShowsFileRefPath(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Full: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [file_ref] " + path
+	want := "SPEC [path] " + path
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %q, want path %q", strings.Join(lines, "\n"), want)
+		t.Fatalf("List = %q, want path %q", strings.Join(lines, "\n"), want)
 	}
 }
 
@@ -578,7 +576,7 @@ func TestRenderUsesInjectedStore(t *testing.T) {
 	}
 }
 
-func TestRenderResolvesDocAndFileRefContent(t *testing.T) {
+func TestRenderResolvesStringAndFileRefContent(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "fragment.txt")
 	if err := os.WriteFile(path, []byte("file body"), 0o644); err != nil {
@@ -586,11 +584,11 @@ func TestRenderResolvesDocAndFileRefContent(t *testing.T) {
 	}
 	a := NewWithStore(&fakeStore{
 		entries: map[string]model.Entry{
-			"PROMPT": model.NewEntry("$DOC / $FILE", model.ValueTypeString),
+			"PROMPT": model.NewEntry("$TEXT / $FILE", model.ValueTypeString),
 		},
 		resolvedEntries: map[string]model.Entry{
-			"PROMPT": model.NewEntry("$DOC / $FILE", model.ValueTypeString),
-			"DOC":    model.NewEntry("doc body", model.ValueTypeDoc),
+			"PROMPT": model.NewEntry("$TEXT / $FILE", model.ValueTypeString),
+			"TEXT":   model.NewEntry("text body", model.ValueTypeString),
 			"FILE":   model.NewEntry(path, model.ValueTypeFileRef),
 		},
 	})
@@ -599,7 +597,7 @@ func TestRenderResolvesDocAndFileRefContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render error: %v", err)
 	}
-	if got != "doc body / file body" {
+	if got != "text body / file body" {
 		t.Fatalf("Render = %q, want resolved typed content", got)
 	}
 }

@@ -34,8 +34,8 @@ func TestRemoteStoreRoundTrip(t *testing.T) {
 	if err := remote.SetValue(ctx, "root", "NAME", "ada"); err != nil {
 		t.Fatalf("SetValue error: %v", err)
 	}
-	if err := remote.SetEntry(ctx, "root", "STORY", model.NewEntry("full doc content here", model.ValueTypeDoc)); err != nil {
-		t.Fatalf("SetEntry doc error: %v", err)
+	if err := remote.SetEntry(ctx, "root", "STORY", model.NewEntry("full string content here", model.ValueTypeString)); err != nil {
+		t.Fatalf("SetEntry string error: %v", err)
 	}
 
 	value, err := remote.GetValue(ctx, "child", "NAME")
@@ -44,8 +44,8 @@ func TestRemoteStoreRoundTrip(t *testing.T) {
 	}
 
 	entry, err := remote.GetEntry(ctx, "child", "STORY")
-	if err != nil || entry.Value != "full doc content here" || entry.ValueType != model.ValueTypeDoc {
-		t.Fatalf("GetEntry = %+v, %v, want full doc value and type", entry, err)
+	if err != nil || entry.Value != "full string content here" || entry.ValueType != model.ValueTypeString {
+		t.Fatalf("GetEntry = %+v, %v, want full string value and type", entry, err)
 	}
 
 	resolved, err := remote.Resolve(ctx, "child")
@@ -54,8 +54,8 @@ func TestRemoteStoreRoundTrip(t *testing.T) {
 	}
 
 	entries, err := remote.ResolveEntries(ctx, "child")
-	if err != nil || entries["STORY"].ValueType != model.ValueTypeDoc {
-		t.Fatalf("ResolveEntries = %v, %v, want STORY doc", entries, err)
+	if err != nil || entries["STORY"].ValueType != model.ValueTypeString {
+		t.Fatalf("ResolveEntries = %v, %v, want STORY string", entries, err)
 	}
 
 	if err := remote.ShareContext(ctx, "root", "does-not-exist"); err == nil {

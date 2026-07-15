@@ -15,8 +15,8 @@ ctx and are never rendered, since that content wasn't authored with ctx's
 $VAR syntax in mind.
 
 --raw returns the value unrendered instead: for file_ref entries this is
-the referenced path itself; for string and doc entries it's the stored
-value with no placeholder substitution. Since --raw never renders, missing
+the referenced path itself; for string entries it's the stored value
+with no placeholder substitution. Since --raw never renders, missing
 placeholders can't cause it to fail.
 
 --allow-missing renders but leaves unresolved $VAR placeholders unchanged

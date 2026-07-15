@@ -22,7 +22,7 @@ import (
 const (
 	TreeFormatText = "text"
 	TreeFormatJSON = "json"
-	MaxDocBytes    = 500 * 1024
+	MaxStringBytes = 500 * 1024
 )
 
 type Store interface {
@@ -245,14 +245,14 @@ func (a *App) Resolve(ctx context.Context, sessionID string) (map[string]string,
 }
 
 // ResolveEntries returns all visible entries for a session as stored
-// (doc values in full, file_ref values as their path, unlike Resolve which
+// (string values in full, file_ref values as their path, unlike Resolve which
 // reads file_ref content). Used by the ctx_resolve_entries MCP tool so a
 // remote-backed client can reconstruct typed entries.
 func (a *App) ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error) {
 	return a.store.ResolveEntries(ctx, sessionID)
 }
 
-func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAsPaths, quiet bool) ([]string, error) {
+func (a *App) Export(ctx context.Context, sessionID string, filesAsPaths, quiet bool) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -271,10 +271,6 @@ func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAs
 		switch entry.ValueType {
 		case model.ValueTypeString:
 			lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(entry.Value)))
-		case model.ValueTypeDoc:
-			if includeDocs {
-				lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(entry.Value)))
-			}
 		case model.ValueTypeFileRef:
 			if filesAsPaths {
 				lines = append(lines, fmt.Sprintf("export %s=%s", key, shellSingleQuote(entry.Value)))
@@ -287,12 +283,12 @@ func (a *App) Export(ctx context.Context, sessionID string, includeDocs, filesAs
 	return lines, nil
 }
 
-type ShowOptions struct {
+type ListOptions struct {
 	Full   bool
 	Render bool
 }
 
-func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]string, error) {
+func (a *App) List(ctx context.Context, sessionID string, opts ListOptions) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -325,7 +321,7 @@ func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]s
 	return lines, nil
 }
 
-func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]any, error) {
+func (a *App) ListEntries(ctx context.Context, sessionID string) ([]map[string]any, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -340,9 +336,6 @@ func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]a
 		switch entry.ValueType {
 		case model.ValueTypeString:
 			item["value"] = entry.Value
-		case model.ValueTypeDoc:
-			item["size_bytes"] = len([]byte(entry.Value))
-			item["preview"] = textutil.Preview(entry.Value, textutil.PreviewChars)
 		case model.ValueTypeFileRef:
 			item["path"] = entry.Value
 			_, err := os.Stat(entry.Value)
@@ -575,10 +568,8 @@ func absoluteExistingPath(path string) (string, error) {
 func validateEntry(entry model.Entry) error {
 	switch entry.ValueType {
 	case model.ValueTypeString:
-		return nil
-	case model.ValueTypeDoc:
-		if len([]byte(entry.Value)) > MaxDocBytes {
-			return fmt.Errorf("doc content exceeds 500KB. Consider splitting into multiple keys or referencing a file with --path")
+		if len([]byte(entry.Value)) > MaxStringBytes {
+			return fmt.Errorf("value exceeds 500KB. Consider splitting into multiple keys or referencing a file with --path")
 		}
 		return nil
 	case model.ValueTypeFileRef:
@@ -610,7 +601,7 @@ func resolveEntries(entries map[string]model.Entry, op string) (map[string]strin
 
 func resolveEntryContent(key string, entry model.Entry, op string) (string, error) {
 	switch entry.ValueType {
-	case model.ValueTypeString, model.ValueTypeDoc:
+	case model.ValueTypeString:
 		return entry.Value, nil
 	case model.ValueTypeFileRef:
 		data, err := os.ReadFile(entry.Value)

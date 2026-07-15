@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 
 	"ctx/internal/model"
 )
@@ -12,11 +10,9 @@ import (
 func Set(ctx context.Context, args []string) error {
 	if helpRequested(args) {
 		fmt.Println(`Usage: ctx set [session_id] <key> <value>
-       ctx set [session_id] <key> --doc [text]
        ctx set [session_id] <key> --path <path>
 
-Set a key in a session. --doc stores a doc value (reads from stdin if
-text is omitted). --path stores a file_ref pointing at <path>.`)
+Set a key in a session. --path stores a file_ref pointing at <path>.`)
 		return nil
 	}
 
@@ -44,14 +40,11 @@ type setArgs struct {
 
 func parseSetArgs(args []string) (setArgs, error) {
 	if len(args) < 2 {
-		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--doc [text]|--path <path>")
+		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--path <path>")
 	}
 	flagIndex := -1
 	for i, arg := range args {
-		if arg == "--doc" || arg == "--path" {
-			if flagIndex != -1 {
-				return setArgs{}, fmt.Errorf("--doc and --path are mutually exclusive")
-			}
+		if arg == "--path" {
 			flagIndex = i
 		}
 	}
@@ -72,7 +65,7 @@ func parseSetArgs(args []string) (setArgs, error) {
 	}
 
 	if flagIndex != 1 && flagIndex != 2 {
-		return setArgs{}, usage("set", "ctx set [session_id] <key> --doc [text] | ctx set [session_id] <key> --path <path>")
+		return setArgs{}, usage("set", "ctx set [session_id] <key> --path <path>")
 	}
 	hasSession := flagIndex == 2
 	sessionID, err := sessionArg(args, hasSession)
@@ -84,31 +77,10 @@ func parseSetArgs(args []string) (setArgs, error) {
 		offset = 1
 	}
 	key := args[offset]
-	flag := args[flagIndex]
 	values := args[flagIndex+1:]
 
-	switch flag {
-	case "--doc":
-		if len(values) > 1 {
-			return setArgs{}, fmt.Errorf("--doc accepts at most one content argument")
-		}
-		value := ""
-		if len(values) == 1 {
-			value = values[0]
-		} else {
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return setArgs{}, fmt.Errorf("read doc from stdin: %w", err)
-			}
-			value = string(data)
-		}
-		return setArgs{sessionID: sessionID, key: key, value: value, valueType: model.ValueTypeDoc}, nil
-	case "--path":
-		if len(values) != 1 {
-			return setArgs{}, fmt.Errorf("--path requires exactly one path")
-		}
-		return setArgs{sessionID: sessionID, key: key, value: values[0], valueType: model.ValueTypeFileRef}, nil
-	default:
-		return setArgs{}, usage("set", "ctx set [session_id] <key> <value>|--doc [text]|--path <path>")
+	if len(values) != 1 {
+		return setArgs{}, fmt.Errorf("--path requires exactly one path")
 	}
+	return setArgs{sessionID: sessionID, key: key, value: values[0], valueType: model.ValueTypeFileRef}, nil
 }

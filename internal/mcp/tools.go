@@ -6,13 +6,12 @@ func tools() []map[string]any {
 			"id":     stringSchema("Optional custom session id."),
 			"parent": stringSchema("Optional parent session id."),
 		}, []string{}),
-		tool("ctx_set", "Set a value in a ctx session. Use is_doc for long-form content; docs are excluded from ctx_export by default and shown as previews in ctx_show.", map[string]any{
+		tool("ctx_set", "Set a value in a ctx session.", map[string]any{
 			"session_id": stringSchema("Session id."),
 			"key":        stringSchema("Context key."),
-			"value":      stringSchema("Context value. For long-form text, set is_doc to true."),
-			"is_doc":     boolSchema("Mark this value as a long-form document."),
+			"value":      stringSchema("Context value."),
 		}, []string{"session_id", "key", "value"}),
-		tool("ctx_get", "Get a visible value from a session. Doc values return full content; file_ref values return referenced file content.", map[string]any{
+		tool("ctx_get", "Get a visible value from a session. file_ref values return referenced file content.", map[string]any{
 			"session_id": stringSchema("Session id."),
 			"key":        stringSchema("Context key."),
 			"preview":    boolSchema("Return only the first 10 lines."),
@@ -20,10 +19,10 @@ func tools() []map[string]any {
 		tool("ctx_resolve", "Return all visible key/value pairs for a session as structured data.", map[string]any{
 			"session_id": stringSchema("Session id."),
 		}, []string{"session_id"}),
-		tool("ctx_show", "Return all visible key/value pairs as human-readable KEY = VALUE lines.", map[string]any{
+		tool("ctx_list", "Return all visible key/value pairs as human-readable KEY = VALUE lines.", map[string]any{
 			"session_id": stringSchema("Session id."),
 		}, []string{"session_id"}),
-		tool("ctx_resolve_entries", "Return all visible entries for a session with full values and types, unlike ctx_show which previews doc values. Used by clients that use a remote ctx MCP server as their backend.", map[string]any{
+		tool("ctx_resolve_entries", "Return all visible entries for a session with full values and types. Used by clients that use a remote ctx MCP server as their backend.", map[string]any{
 			"session_id": stringSchema("Session id."),
 		}, []string{"session_id"}),
 		tool("ctx_export", "Return all visible key/value pairs as shell export lines, including CTX_ID.", map[string]any{

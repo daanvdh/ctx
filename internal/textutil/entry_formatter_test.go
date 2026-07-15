@@ -35,19 +35,19 @@ func TestPreviewTrailingNewlineWithNoContentAfter(t *testing.T) {
 	}
 }
 
-func TestLineFormatsDocWithoutEscapedNewlines(t *testing.T) {
-	got := Line("DOC", model.NewEntry("first line\nsecond line", model.ValueTypeDoc))
+func TestLineFormatsStringWithoutEscapedNewlines(t *testing.T) {
+	got := Line("DOC", model.NewEntry("first line\nsecond line", model.ValueTypeString))
 	if strings.Contains(got, `\n`) || strings.Contains(got, "second line") {
 		t.Fatalf("Line = %q, want first-line preview without escaped newlines", got)
 	}
-	if !strings.Contains(got, "DOC [doc]") || !strings.Contains(got, "first line") {
-		t.Fatalf("Line = %q, want doc label and preview", got)
+	if strings.Contains(got, "[") || !strings.Contains(got, "first line") {
+		t.Fatalf("Line = %q, want no type label and a preview", got)
 	}
 }
 
 func TestLineFormatsStringWithPreview(t *testing.T) {
 	got := Line("TEXT", model.NewEntry("first line\nsecond line", model.ValueTypeString))
-	if got != "TEXT [string] first line ..." {
-		t.Fatalf("Line = %q, want first-line string preview with truncation marker", got)
+	if got != "TEXT first line ..." {
+		t.Fatalf("Line = %q, want first-line string preview with truncation marker and no type label", got)
 	}
 }

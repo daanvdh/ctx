@@ -71,7 +71,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
-	if current >= 3 {
+	if current >= 4 {
 		return nil
 	}
 
@@ -128,6 +128,14 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, ?)`, time.Now()); err != nil {
+			return fmt.Errorf("store: record schema migration: %w", err)
+		}
+	}
+	if current < 4 {
+		if _, err := tx.ExecContext(ctx, `UPDATE session_data SET value_type = 'string' WHERE value_type = 'doc'`); err != nil {
+			return fmt.Errorf("store: migrate doc entries to string: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (4, ?)`, time.Now()); err != nil {
 			return fmt.Errorf("store: record schema migration: %w", err)
 		}
 	}
