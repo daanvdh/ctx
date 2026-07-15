@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 
 	"ctx/internal/model"
 	"ctx/internal/session"
+	"ctx/internal/store"
 )
 
 type fakeStore struct {
@@ -233,7 +235,7 @@ func TestGetFileRefReadsContentAndPath(t *testing.T) {
 	if value != "line1\nline2\n" {
 		t.Fatalf("file_ref value = %q, want file content", value)
 	}
-	gotPath, err := a.GetRaw(context.Background(), "s1", "SPEC")
+	gotPath, err := a.GetRaw(context.Background(), "s1", "SPEC", false)
 	if err != nil {
 		t.Fatalf("GetRaw error: %v", err)
 	}
@@ -268,7 +270,7 @@ func TestGetDocRawAndPreview(t *testing.T) {
 		"DOC": model.NewEntry(content, model.ValueTypeDoc),
 	}})
 
-	raw, err := a.GetRaw(context.Background(), "s1", "DOC")
+	raw, err := a.GetRaw(context.Background(), "s1", "DOC", false)
 	if err != nil {
 		t.Fatalf("GetRaw error: %v", err)
 	}
@@ -365,7 +367,7 @@ func TestGetRawReturnsPathForFileRef(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	got, err := a.GetRaw(context.Background(), "s1", "SPEC")
+	got, err := a.GetRaw(context.Background(), "s1", "SPEC", false)
 	if err != nil {
 		t.Fatalf("GetRaw error: %v", err)
 	}
@@ -379,12 +381,44 @@ func TestGetRawReturnsUnrenderedStringValue(t *testing.T) {
 		"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
 	}})
 
-	got, err := a.GetRaw(context.Background(), "s1", "GREETING")
+	got, err := a.GetRaw(context.Background(), "s1", "GREETING", false)
 	if err != nil {
 		t.Fatalf("GetRaw error: %v", err)
 	}
 	if got != "hello $NAME" {
 		t.Fatalf("GetRaw = %q, want unrendered value", got)
+	}
+}
+
+func TestGetRawFailsForMissingKeyByDefault(t *testing.T) {
+	a := NewWithStore(&fakeStore{err: fmt.Errorf("key %s %w in session %s", "KEY", store.ErrKeyNotFound, "s1")})
+
+	if _, err := a.GetRaw(context.Background(), "s1", "KEY", false); err == nil {
+		t.Fatal("GetRaw error = nil, want not-found error")
+	}
+}
+
+func TestGetRawAllowMissingReturnsEmptyForMissingKey(t *testing.T) {
+	a := NewWithStore(&fakeStore{err: fmt.Errorf("key %s %w in session %s", "KEY", store.ErrKeyNotFound, "s1")})
+
+	got, err := a.GetRaw(context.Background(), "s1", "KEY", true)
+	if err != nil {
+		t.Fatalf("GetRaw error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("GetRaw = %q, want empty value for missing key", got)
+	}
+}
+
+func TestGetRenderedAllowMissingReturnsEmptyForMissingKey(t *testing.T) {
+	a := NewWithStore(&fakeStore{err: fmt.Errorf("key %s %w in session %s", "KEY", store.ErrKeyNotFound, "s1")})
+
+	got, err := a.GetRendered(context.Background(), "s1", "KEY", true)
+	if err != nil {
+		t.Fatalf("GetRendered error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("GetRendered = %q, want empty value for missing key", got)
 	}
 }
 

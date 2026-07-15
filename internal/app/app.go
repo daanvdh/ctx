@@ -143,16 +143,30 @@ func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, erro
 	return resolveEntryContent(key, entry, "get")
 }
 
+// getEntryAllowMissing fetches a key's entry, and if it isn't found and
+// allowMissing is set, reports that as no entry rather than an error, so
+// callers can return an empty value instead of failing.
+func (a *App) getEntryAllowMissing(ctx context.Context, sessionID, key string, allowMissing bool) (entry model.Entry, found bool, err error) {
+	entry, err = a.store.GetEntry(ctx, sessionID, key)
+	if err != nil {
+		if allowMissing && store.IsKeyNotFound(err) {
+			return model.Entry{}, false, nil
+		}
+		return model.Entry{}, false, err
+	}
+	return entry, true, nil
+}
+
 // GetRendered returns a key's value with $VAR placeholders substituted
 // recursively from the session's visible context, matching the rendering
 // ctx list --full performs. file_ref entries reference files living outside
 // ctx and are returned unrendered, since their content wasn't authored with
 // ctx's $VAR syntax in mind and may contain it unintentionally. If
-// allowMissing is false and a placeholder can't be resolved, the returned
-// error suggests --allow-missing.
+// allowMissing is false, a key that doesn't exist or a placeholder that
+// can't be resolved both fail; the placeholder error suggests --allow-missing.
 func (a *App) GetRendered(ctx context.Context, sessionID, key string, allowMissing bool) (string, error) {
-	entry, err := a.store.GetEntry(ctx, sessionID, key)
-	if err != nil {
+	entry, found, err := a.getEntryAllowMissing(ctx, sessionID, key, allowMissing)
+	if err != nil || !found {
 		return "", err
 	}
 	content, err := resolveEntryContent(key, entry, "get")
@@ -181,10 +195,11 @@ func (a *App) GetRendered(ctx context.Context, sessionID, key string, allowMissi
 // GetRaw returns a key's stored value without rendering $VAR placeholders.
 // For file_ref entries it returns the referenced path itself rather than the
 // file's content, since --raw is meant to expose exactly what's stored for
-// the key.
-func (a *App) GetRaw(ctx context.Context, sessionID, key string) (string, error) {
-	entry, err := a.store.GetEntry(ctx, sessionID, key)
-	if err != nil {
+// the key. allowMissing makes a key that doesn't exist return "" instead of
+// failing; --raw never renders, so it has no effect on placeholders.
+func (a *App) GetRaw(ctx context.Context, sessionID, key string, allowMissing bool) (string, error) {
+	entry, found, err := a.getEntryAllowMissing(ctx, sessionID, key, allowMissing)
+	if err != nil || !found {
 		return "", err
 	}
 	if entry.ValueType == model.ValueTypeFileRef {

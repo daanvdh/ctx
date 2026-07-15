@@ -177,7 +177,7 @@ func (s *RemoteStore) GetEntry(ctx context.Context, sessionID, key string) (mode
 	}
 	entry, ok := entries[key]
 	if !ok {
-		return model.Entry{}, fmt.Errorf("key %s not found in session %s or ancestors", key, sessionID)
+		return model.Entry{}, fmt.Errorf("key %s %w in session %s or ancestors", key, ErrKeyNotFound, sessionID)
 	}
 	return entry, nil
 }
