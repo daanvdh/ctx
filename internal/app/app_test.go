@@ -508,6 +508,21 @@ func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 	}
 }
 
+func TestShowRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"GREETING": model.NewEntry("hello $NOPE", model.ValueTypeString),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if got != "GREETING [string] hello $NOPE" {
+		t.Fatalf("Show = %q, want unresolved placeholder left unchanged", got)
+	}
+}
+
 func TestShowRenderSkipsFileRefContent(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "doc.txt")

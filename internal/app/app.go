@@ -311,7 +311,9 @@ func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]s
 			continue
 		}
 
-		content, err := renderEntryValue(key, entry, !opts.Render, false, resolveContext)
+		// allowMissing is always true here: a listing shouldn't fail outright
+		// over one entry's unresolved placeholder; leave it unchanged instead.
+		content, err := renderEntryValue(key, entry, !opts.Render, true, resolveContext)
 		if err != nil {
 			return nil, err
 		}
