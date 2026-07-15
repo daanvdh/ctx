@@ -7,7 +7,7 @@ import (
 
 func Get(ctx context.Context, args []string) error {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx get [session_id] <key> [--raw] [--allow-missing]
+		fmt.Println(`Usage: ctx get [session_id] <key> [--raw|--allow-missing]
 
 Get a key's value from a session (or an ancestor), rendering $VAR
 placeholders by default. file_ref entries reference files living outside
@@ -16,10 +16,11 @@ $VAR syntax in mind.
 
 --raw returns the value unrendered instead: for file_ref entries this is
 the referenced path itself; for string and doc entries it's the stored
-value with no placeholder substitution.
+value with no placeholder substitution. Since --raw never renders, missing
+placeholders can't cause it to fail.
 
---allow-missing leaves unresolved $VAR placeholders unchanged instead of
-failing.`)
+--allow-missing renders but leaves unresolved $VAR placeholders unchanged
+instead of failing. Mutually exclusive with --raw.`)
 		return nil
 	}
 
@@ -36,8 +37,11 @@ failing.`)
 			filtered = append(filtered, arg)
 		}
 	}
+	if raw && allowMissing {
+		return fmt.Errorf("--raw and --allow-missing are mutually exclusive")
+	}
 	if len(filtered) != 1 && len(filtered) != 2 {
-		return usage("get", "ctx get [session_id] <key> [--raw] [--allow-missing]")
+		return usage("get", "ctx get [session_id] <key> [--raw|--allow-missing]")
 	}
 
 	hasSession := len(filtered) == 2
