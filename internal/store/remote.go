@@ -133,12 +133,11 @@ func (s *RemoteStore) SetValue(ctx context.Context, sessionID, key, value string
 
 func (s *RemoteStore) SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
 	switch entry.ValueType {
-	case model.ValueTypeString, model.ValueTypeDoc:
+	case model.ValueTypeString:
 		_, err := s.call(ctx, "ctx_set", map[string]any{
 			"session_id": sessionID,
 			"key":        key,
 			"value":      entry.Value,
-			"is_doc":     entry.ValueType == model.ValueTypeDoc,
 		})
 		return err
 	default:

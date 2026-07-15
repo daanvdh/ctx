@@ -91,7 +91,7 @@ func TestServerInitializeAndToolCalls(t *testing.T) {
 	}
 }
 
-func TestServerDocValuePreviewAndShowShape(t *testing.T) {
+func TestServerGetPreviewAndShowShape(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CTX_ID", "")
 
@@ -113,9 +113,8 @@ func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 			"name": "ctx_set",
 			"arguments": map[string]any{
 				"session_id": "root",
-				"key":        "DOC",
+				"key":        "TEXT",
 				"value":      "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n",
-				"is_doc":     true,
 			},
 		},
 	})
@@ -127,7 +126,7 @@ func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 			"name": "ctx_get",
 			"arguments": map[string]any{
 				"session_id": "root",
-				"key":        "DOC",
+				"key":        "TEXT",
 				"preview":    true,
 			},
 		},
@@ -152,12 +151,12 @@ func TestServerDocValuePreviewAndShowShape(t *testing.T) {
 		t.Fatalf("preview response = %s, want first 10 lines only", text)
 	}
 	show := toolText(t, responses[3])
-	if !strings.Contains(show, `"value_type": "doc"`) || !strings.Contains(show, `"size_bytes"`) || strings.Contains(show, `"value": "1\\n2`) {
-		t.Fatalf("ctx_show response = %s, want structured doc preview", show)
+	if !strings.Contains(show, `"value_type": "string"`) || !strings.Contains(show, `"value": "1\n2`) {
+		t.Fatalf("ctx_show response = %s, want structured string value", show)
 	}
 }
 
-func TestServerResolveEntriesReturnsFullDocValueUnlikeShow(t *testing.T) {
+func TestServerResolveEntriesReturnsFullStringValue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CTX_ID", "")
 
@@ -166,12 +165,12 @@ func TestServerResolveEntriesReturnsFullDocValueUnlikeShow(t *testing.T) {
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": "ctx_new", "arguments": map[string]any{"id": "root"}},
 	})
-	longDoc := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n"
+	longText := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n"
 	writeTestMessage(t, &input, map[string]any{
 		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
 		"params": map[string]any{
 			"name":      "ctx_set",
-			"arguments": map[string]any{"session_id": "root", "key": "DOC", "value": longDoc, "is_doc": true},
+			"arguments": map[string]any{"session_id": "root", "key": "TEXT", "value": longText},
 		},
 	})
 	writeTestMessage(t, &input, map[string]any{
@@ -186,11 +185,11 @@ func TestServerResolveEntriesReturnsFullDocValueUnlikeShow(t *testing.T) {
 
 	responses := readTestResponses(t, output.Bytes())
 	text := toolText(t, responses[2])
-	if !strings.Contains(text, `"value_type": "doc"`) {
-		t.Fatalf("ctx_resolve_entries response = %s, want value_type doc", text)
+	if !strings.Contains(text, `"value_type": "string"`) {
+		t.Fatalf("ctx_resolve_entries response = %s, want value_type string", text)
 	}
 	if !strings.Contains(text, "11") {
-		t.Fatalf("ctx_resolve_entries response = %s, want full doc value (not truncated like ctx_show)", text)
+		t.Fatalf("ctx_resolve_entries response = %s, want full string value", text)
 	}
 }
 

@@ -15,24 +15,27 @@ const PreviewChars = 60
 // Line returns the single-line display form for a typed entry.
 func Line(key string, entry model.Entry) string {
 	switch entry.ValueType {
-	case model.ValueTypeDoc:
-		return fmt.Sprintf("%s [doc] %s %s", key, HumanSize(len([]byte(entry.Value))), Preview(entry.Value, PreviewChars))
 	case model.ValueTypeFileRef:
 		if _, err := os.Stat(entry.Value); err != nil && os.IsNotExist(err) {
 			return fmt.Sprintf("%s [path] %s", key, "\u26a0 path not found")
 		}
 		return fmt.Sprintf("%s [path] %s", key, entry.Value)
 	case model.ValueTypeString:
-		return fmt.Sprintf("%s [string] %s", key, Preview(entry.Value, PreviewChars))
+		return fmt.Sprintf("%s %s", key, Preview(entry.Value, PreviewChars))
 	default:
 		return fmt.Sprintf("%s [%s] not implemented", key, entry.ValueType)
 	}
 }
 
 // FullLine returns the display line for a typed entry using already-resolved
-// content, bypassing the per-type preview/truncation used by Line.
+// content, bypassing the per-type preview/truncation used by Line. Only
+// file_ref entries show their type label; other types print like a plain
+// string.
 func FullLine(key string, entry model.Entry, content string) string {
-	return fmt.Sprintf("%s [%s] %s", key, entry.ValueType, content)
+	if entry.ValueType == model.ValueTypeFileRef {
+		return fmt.Sprintf("%s [path] %s", key, content)
+	}
+	return fmt.Sprintf("%s %s", key, content)
 }
 
 // Preview returns the first line of a value, truncated to max characters.
@@ -59,12 +62,4 @@ func Preview(value string, max int) string {
 		return string(runes[:max])
 	}
 	return string(runes[:max-4]) + " ..."
-}
-
-// HumanSize formats a byte count for compact display.
-func HumanSize(size int) string {
-	if size < 1024 {
-		return fmt.Sprintf("%d B", size)
-	}
-	return fmt.Sprintf("%.1f KB", float64(size)/1024.0)
 }

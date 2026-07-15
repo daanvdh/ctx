@@ -7,24 +7,20 @@ import (
 
 func Export(ctx context.Context, args []string) error {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx export [session_id] [--include-docs] [--files-as-paths] [--quiet]
+		fmt.Println(`Usage: ctx export [session_id] [--files-as-paths] [--quiet]
 
 Print all visible key/value pairs as shell export lines, including
-CTX_ID. Doc and file_ref values are skipped by default; --include-docs
-exports doc values inline, --files-as-paths exports file_ref values as
-their path. --quiet suppresses warnings for keys that aren't valid
-shell variable names.`)
+CTX_ID. file_ref values are skipped by default; --files-as-paths
+exports file_ref values as their path. --quiet suppresses warnings for
+keys that aren't valid shell variable names.`)
 		return nil
 	}
 
-	includeDocs := false
 	filesAsPaths := false
 	quiet := false
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
-		case "--include-docs":
-			includeDocs = true
 		case "--files-as-paths":
 			filesAsPaths = true
 		case "--quiet":
@@ -34,7 +30,7 @@ shell variable names.`)
 		}
 	}
 	if len(filtered) > 1 {
-		return usage("export", "ctx export [session_id] [--include-docs] [--files-as-paths] [--quiet]")
+		return usage("export", "ctx export [session_id] [--files-as-paths] [--quiet]")
 	}
 
 	sessionID, err := sessionArg(filtered, len(filtered) == 1)
@@ -46,7 +42,7 @@ shell variable names.`)
 	if err != nil {
 		return err
 	}
-	lines, err := a.Export(ctx, sessionID, includeDocs, filesAsPaths, quiet)
+	lines, err := a.Export(ctx, sessionID, filesAsPaths, quiet)
 	if err != nil {
 		return err
 	}

@@ -571,11 +571,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]string{"id": id}
 	case "ctx_set":
-		valueType := model.ValueTypeString
-		if boolDefault(args, "is_doc", false) {
-			valueType = model.ValueTypeDoc
-		}
-		err := a.SetEntry(ctx, requiredString(args, "session_id"), requiredString(args, "key"), model.NewEntry(requiredString(args, "value"), valueType))
+		err := a.SetEntry(ctx, requiredString(args, "session_id"), requiredString(args, "key"), model.NewEntry(requiredString(args, "value"), model.ValueTypeString))
 		if err != nil {
 			return toolError(err), nil
 		}
@@ -614,7 +610,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 		}
 		out = map[string]any{"entries": entries}
 	case "ctx_export":
-		lines, err := a.Export(ctx, requiredString(args, "session_id"), false, false, false)
+		lines, err := a.Export(ctx, requiredString(args, "session_id"), false, false)
 		if err != nil {
 			return toolError(err), nil
 		}

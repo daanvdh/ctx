@@ -44,8 +44,8 @@ func TestMigrationRecordsSchemaVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 3 {
-		t.Fatalf("schema version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("schema version = %d, want 4", version)
 	}
 }
 
@@ -143,24 +143,71 @@ func TestSetEntryStoresValueType(t *testing.T) {
 	if err := CreateSession(dsn, "s1", nil); err != nil {
 		t.Fatalf("CreateSession error: %v", err)
 	}
-	if err := SetEntry(dsn, "s1", "DOC", model.NewEntry("hello\nworld", model.ValueTypeDoc)); err != nil {
+	if err := SetEntry(dsn, "s1", "REF", model.NewEntry("/tmp/some/path", model.ValueTypeFileRef)); err != nil {
 		t.Fatalf("SetEntry error: %v", err)
 	}
 
-	entry, err := GetEntry(dsn, "s1", "DOC")
+	entry, err := GetEntry(dsn, "s1", "REF")
 	if err != nil {
 		t.Fatalf("GetEntry error: %v", err)
 	}
-	if entry.ValueType != model.ValueTypeDoc || entry.Value != "hello\nworld" {
-		t.Fatalf("entry = %#v, want doc content", entry)
+	if entry.ValueType != model.ValueTypeFileRef || entry.Value != "/tmp/some/path" {
+		t.Fatalf("entry = %#v, want file_ref content", entry)
 	}
 
 	resolved, err := ResolveEntries(dsn, "s1")
 	if err != nil {
 		t.Fatalf("ResolveEntries error: %v", err)
 	}
-	if resolved["DOC"].ValueType != model.ValueTypeDoc {
-		t.Fatalf("resolved DOC type = %q, want doc", resolved["DOC"].ValueType)
+	if resolved["REF"].ValueType != model.ValueTypeFileRef {
+		t.Fatalf("resolved REF type = %q, want file_ref", resolved["REF"].ValueType)
+	}
+}
+
+// TestMigrateConvertsDocValueTypeToString simulates a pre-v4 database (schema
+// version 3, with a legacy 'doc' value_type row) and verifies that opening it
+// migrates that row to 'string'.
+func TestMigrateConvertsDocValueTypeToString(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_migrate_doc.db")
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open db error: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL)`); err != nil {
+		t.Fatalf("create schema_migrations error: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?)`, time.Now()); err != nil {
+		t.Fatalf("seed schema version error: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, parent_id TEXT, created_at DATETIME)`); err != nil {
+		t.Fatalf("create sessions error: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE session_data (session_id TEXT, key TEXT, value TEXT, value_type TEXT NOT NULL DEFAULT 'string', PRIMARY KEY (session_id, key))`); err != nil {
+		t.Fatalf("create session_data error: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE session_shares (from_session_id TEXT NOT NULL, to_session_id TEXT NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (from_session_id, to_session_id))`); err != nil {
+		t.Fatalf("create session_shares error: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions (id, created_at) VALUES ('s1', ?)`, time.Now()); err != nil {
+		t.Fatalf("seed session error: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO session_data (session_id, key, value, value_type) VALUES ('s1', 'KEY', 'hello', 'doc')`); err != nil {
+		t.Fatalf("seed doc row error: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db error: %v", err)
+	}
+
+	// Opening the db re-runs migrate(), which applies the v4 step against
+	// the pre-existing schema version 3 database.
+	entry, err := GetEntry(dsn, "s1", "KEY")
+	if err != nil {
+		t.Fatalf("GetEntry error: %v", err)
+	}
+	if entry.ValueType != model.ValueTypeString || entry.Value != "hello" {
+		t.Fatalf("entry = %#v, want migrated string content", entry)
 	}
 }
 
