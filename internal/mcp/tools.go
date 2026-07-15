@@ -19,7 +19,7 @@ func tools() []map[string]any {
 		tool("ctx_resolve", "Return all visible key/value pairs for a session as structured data.", map[string]any{
 			"session_id": stringSchema("Session id."),
 		}, []string{"session_id"}),
-		tool("ctx_show", "Return all visible key/value pairs as human-readable KEY = VALUE lines.", map[string]any{
+		tool("ctx_list", "Return all visible key/value pairs as human-readable KEY = VALUE lines.", map[string]any{
 			"session_id": stringSchema("Session id."),
 		}, []string{"session_id"}),
 		tool("ctx_resolve_entries", "Return all visible entries for a session with full values and types. Used by clients that use a remote ctx MCP server as their backend.", map[string]any{

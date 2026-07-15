@@ -283,12 +283,12 @@ func (a *App) Export(ctx context.Context, sessionID string, filesAsPaths, quiet 
 	return lines, nil
 }
 
-type ShowOptions struct {
+type ListOptions struct {
 	Full   bool
 	Render bool
 }
 
-func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]string, error) {
+func (a *App) List(ctx context.Context, sessionID string, opts ListOptions) ([]string, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -321,7 +321,7 @@ func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]s
 	return lines, nil
 }
 
-func (a *App) ShowEntries(ctx context.Context, sessionID string) ([]map[string]any, error) {
+func (a *App) ListEntries(ctx context.Context, sessionID string) ([]map[string]any, error) {
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return nil, err

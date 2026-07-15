@@ -91,7 +91,7 @@ func TestServerInitializeAndToolCalls(t *testing.T) {
 	}
 }
 
-func TestServerGetPreviewAndShowShape(t *testing.T) {
+func TestServerGetPreviewAndListShape(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CTX_ID", "")
 
@@ -136,7 +136,7 @@ func TestServerGetPreviewAndShowShape(t *testing.T) {
 		"id":      4,
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name":      "ctx_show",
+			"name":      "ctx_list",
 			"arguments": map[string]any{"session_id": "root"},
 		},
 	})
@@ -150,9 +150,9 @@ func TestServerGetPreviewAndShowShape(t *testing.T) {
 	if text := toolText(t, responses[2]); strings.Contains(text, "11") || !strings.Contains(text, "10") {
 		t.Fatalf("preview response = %s, want first 10 lines only", text)
 	}
-	show := toolText(t, responses[3])
-	if !strings.Contains(show, `"value_type": "string"`) || !strings.Contains(show, `"value": "1\n2`) {
-		t.Fatalf("ctx_show response = %s, want structured string value", show)
+	list := toolText(t, responses[3])
+	if !strings.Contains(list, `"value_type": "string"`) || !strings.Contains(list, `"value": "1\n2`) {
+		t.Fatalf("ctx_list response = %s, want structured string value", list)
 	}
 }
 

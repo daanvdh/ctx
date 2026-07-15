@@ -593,12 +593,12 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 			return toolError(err), nil
 		}
 		out = map[string]any{"values": values}
-	case "ctx_show":
-		lines, err := a.Show(ctx, requiredString(args, "session_id"), app.ShowOptions{})
+	case "ctx_list":
+		lines, err := a.List(ctx, requiredString(args, "session_id"), app.ListOptions{})
 		if err != nil {
 			return toolError(err), nil
 		}
-		entries, err := a.ShowEntries(ctx, requiredString(args, "session_id"))
+		entries, err := a.ListEntries(ctx, requiredString(args, "session_id"))
 		if err != nil {
 			return toolError(err), nil
 		}

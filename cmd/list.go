@@ -19,7 +19,7 @@ rendering and shows unresolved values. Both flags can be combined.`)
 	}
 
 	raw := false
-	opts := app.ShowOptions{}
+	opts := app.ListOptions{}
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
@@ -45,7 +45,7 @@ rendering and shows unresolved values. Both flags can be combined.`)
 	if err != nil {
 		return err
 	}
-	lines, err := a.Show(ctx, sessionID, opts)
+	lines, err := a.List(ctx, sessionID, opts)
 	if err != nil {
 		return err
 	}

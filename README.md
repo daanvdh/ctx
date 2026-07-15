@@ -186,7 +186,7 @@ Available tools:
 | `ctx_set` | Store a value in a session. File references are CLI-only. |
 | `ctx_get` | Get a visible value from a session, shared context, or ancestor. Pass `preview: true` to return the first 10 lines. |
 | `ctx_resolve` | Return all visible key/value pairs as structured data. |
-| `ctx_show` | Return human-readable lines and structured entries including `value_type` and file path status. |
+| `ctx_list` | Return human-readable lines and structured entries including `value_type` and file path status. |
 | `ctx_export` | Return default shell `export` lines, including `CTX_ID`. File references are omitted. |
 | `ctx_share` | Share one session's context into another session. |
 | `ctx_tree` | Render the complete session tree as text or JSON. |

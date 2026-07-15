@@ -423,19 +423,19 @@ func TestSetStringRejectsTooLargeContent(t *testing.T) {
 	}
 }
 
-func TestShow(t *testing.T) {
+func TestList(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolved: map[string]string{"B": "2", "A": "1"}})
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
+	lines, err := a.List(context.Background(), "s1", ListOptions{})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	want := []string{"A 1", "B 2"}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("Show = %v, want %v", lines, want)
+		t.Fatalf("List = %v, want %v", lines, want)
 	}
 }
 
-func TestShowFormatsFileRefAsPath(t *testing.T) {
+func TestListFormatsFileRefAsPath(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "spec.yaml")
 	if err := os.WriteFile(path, []byte("openapi: 3.0.0\n"), 0o644); err != nil {
@@ -445,50 +445,50 @@ func TestShowFormatsFileRefAsPath(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
+	lines, err := a.List(context.Background(), "s1", ListOptions{})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	want := "SPEC [path] " + path
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %v, want %q", lines, want)
+		t.Fatalf("List = %v, want %q", lines, want)
 	}
 }
 
-func TestShowPreviewsFirstLine(t *testing.T) {
+func TestListPreviewsFirstLine(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{})
+	lines, err := a.List(context.Background(), "s1", ListOptions{})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
 	if strings.Contains(got, `\n`) || strings.Contains(got, "hidden line") {
-		t.Fatalf("Show = %q, want first-line previews only", got)
+		t.Fatalf("List = %q, want first-line previews only", got)
 	}
 	if !strings.Contains(got, "TEXT text line") || strings.Contains(got, "TEXT [") {
-		t.Fatalf("Show = %q, want string preview without a type label", got)
+		t.Fatalf("List = %q, want string preview without a type label", got)
 	}
 }
 
-func TestShowFullShowsUntruncatedContent(t *testing.T) {
+func TestListFullShowsUntruncatedContent(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"TEXT": model.NewEntry("text line\nhidden line", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Full: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	want := "TEXT text line\nhidden line"
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %q, want %q", strings.Join(lines, "\n"), want)
+		t.Fatalf("List = %q, want %q", strings.Join(lines, "\n"), want)
 	}
 }
 
-func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
+func TestListRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
 		"NAME":     model.NewEntry("$FIRST $LAST", model.ValueTypeString),
@@ -496,32 +496,32 @@ func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 		"LAST":     model.NewEntry("lovelace", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Render: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
 	if !strings.Contains(got, "GREETING hello ada lovelace") {
-		t.Fatalf("Show = %q, want recursively rendered GREETING", got)
+		t.Fatalf("List = %q, want recursively rendered GREETING", got)
 	}
 }
 
-func TestShowRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
+func TestListRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
 	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
 		"GREETING": model.NewEntry("hello $NOPE", model.ValueTypeString),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Render: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
 	if got != "GREETING [string] hello $NOPE" {
-		t.Fatalf("Show = %q, want unresolved placeholder left unchanged", got)
+		t.Fatalf("List = %q, want unresolved placeholder left unchanged", got)
 	}
 }
 
-func TestShowRenderSkipsFileRefContent(t *testing.T) {
+func TestListRenderSkipsFileRefContent(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "doc.txt")
 	if err := os.WriteFile(path, []byte("price: $5\n"), 0o644); err != nil {
@@ -531,17 +531,17 @@ func TestShowRenderSkipsFileRefContent(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true, Render: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Full: true, Render: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	want := "SPEC [file_ref] price: $5\n"
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
+		t.Fatalf("List = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
 	}
 }
 
-func TestShowFullRawShowsFileRefPath(t *testing.T) {
+func TestListFullRawShowsFileRefPath(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "doc.txt")
 	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
@@ -551,13 +551,13 @@ func TestShowFullRawShowsFileRefPath(t *testing.T) {
 		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
 	}})
 
-	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	lines, err := a.List(context.Background(), "s1", ListOptions{Full: true})
 	if err != nil {
-		t.Fatalf("Show error: %v", err)
+		t.Fatalf("List error: %v", err)
 	}
 	want := "SPEC [file_ref] " + path
 	if strings.Join(lines, "\n") != want {
-		t.Fatalf("Show = %q, want path %q", strings.Join(lines, "\n"), want)
+		t.Fatalf("List = %q, want path %q", strings.Join(lines, "\n"), want)
 	}
 }
 
