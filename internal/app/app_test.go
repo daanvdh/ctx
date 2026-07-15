@@ -279,12 +279,62 @@ func TestGetDocPathWritesTempFileAndPreview(t *testing.T) {
 	if string(data) != content {
 		t.Fatalf("temp content = %q, want doc", string(data))
 	}
-	preview, err := a.GetPreview(context.Background(), "s1", "DOC")
+	preview, err := a.GetPreview(context.Background(), "s1", "DOC", true)
 	if err != nil {
 		t.Fatalf("GetPreview error: %v", err)
 	}
 	if preview != "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n" {
 		t.Fatalf("preview = %q, want first 10 lines", preview)
+	}
+}
+
+func TestGetRenderedSubstitutesPlaceholdersRecursively(t *testing.T) {
+	a := NewWithStore(&fakeStore{
+		entries: map[string]model.Entry{
+			"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+		},
+		resolvedEntries: map[string]model.Entry{
+			"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+			"NAME":     model.NewEntry("$FIRST $LAST", model.ValueTypeString),
+			"FIRST":    model.NewEntry("ada", model.ValueTypeString),
+			"LAST":     model.NewEntry("lovelace", model.ValueTypeString),
+		},
+	})
+
+	got, err := a.GetRendered(context.Background(), "s1", "GREETING")
+	if err != nil {
+		t.Fatalf("GetRendered error: %v", err)
+	}
+	if got != "hello ada lovelace" {
+		t.Fatalf("GetRendered = %q, want recursively rendered value", got)
+	}
+}
+
+func TestGetPreviewRendersByDefault(t *testing.T) {
+	a := NewWithStore(&fakeStore{
+		entries: map[string]model.Entry{
+			"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+		},
+		resolvedEntries: map[string]model.Entry{
+			"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+			"NAME":     model.NewEntry("ada", model.ValueTypeString),
+		},
+	})
+
+	got, err := a.GetPreview(context.Background(), "s1", "GREETING", false)
+	if err != nil {
+		t.Fatalf("GetPreview error: %v", err)
+	}
+	if got != "hello ada" {
+		t.Fatalf("GetPreview = %q, want rendered value", got)
+	}
+
+	raw, err := a.GetPreview(context.Background(), "s1", "GREETING", true)
+	if err != nil {
+		t.Fatalf("GetPreview error: %v", err)
+	}
+	if raw != "hello $NAME" {
+		t.Fatalf("GetPreview (raw) = %q, want unrendered value", raw)
 	}
 }
 

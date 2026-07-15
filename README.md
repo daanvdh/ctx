@@ -78,14 +78,13 @@ go install github.com/daanvdh/ctx@latest
 | `ctx session [parent] [name] [--parent <p>\|--root]` | `ctx session`<br>`ctx session my-name`<br>`ctx session parent-id my-name`<br>`ctx session --parent <parent-id>`<br>`ctx session --root`<br>`ctx session --help` | Create a new session. If a name is supplied, it is used (must consist of letters, digits, hyphens or underscores). Otherwise an 8‑character hexadecimal ID is generated. Parent defaults to the `CTX_ID` environment variable, or the tree root if unset; it can be overridden with a leading positional argument or `--parent`, or forced to the root with `--root`. `--parent`/`--root` and a positional parent are mutually exclusive. Use `--help` for usage information. |
 | `ctx session rm <session> [--recursive]` | `ctx session rm $SID`<br>`ctx session rm $SID --recursive` | Delete a session and its variables. Fails if the session has child sessions unless `--recursive` is given, in which case the session and all descendants (and their variables) are deleted. |
 | `ctx set [session] <key> <value>` | `ctx set $SID PROJECT_ID "myproj"`<br>`CTX_ID=$SID ctx set PROJECT_ID "myproj"` | Store a scalar string under *key* in the specified session (overwrites existing key). |
-| `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx show` and `ctx tree`. |
+| `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx list` and `ctx tree`. |
 | `ctx set [session] <key> --path <path>` | `ctx set $SID API_SPEC --path ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
 | `ctx rm [session] <entry>` | `ctx rm $SID PROJECT_ID`<br>`CTX_ID=$SID ctx rm PROJECT_ID` | Remove an entry from the specified session. |
-| `ctx get [session] <key> [--path\|--preview]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --preview`<br>`ctx get $SID STORY --path` | Retrieve a visible value, searching the session, shared contexts, and then ancestors. For `file_ref`, default output is the referenced file content. `--preview` prints the first 10 lines. `--path` returns the stored path for `file_ref`, writes a `doc` to a temp file and returns that path, and returns the value for strings. |
-| `ctx show [session]` | `ctx show $SID` | Print all visible keys with type tags. Strings and documents are shown as first-line previews; path entries are shown as paths. |
+| `ctx get [session] <key> [--raw] [--path\|--preview]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --preview`<br>`ctx get $SID STORY --path`<br>`ctx get $SID STORY --raw` | Retrieve a visible value, searching the session, shared contexts, and then ancestors, substituting `$VAR` placeholders by default. `--raw` returns the unrendered value. `--preview` prints the first 10 lines (rendered unless combined with `--raw`). `--path` returns the stored path for `file_ref`, writes the raw `doc` content to a temp file and returns that path, and returns the value for strings — always unrendered. |
+| `ctx list [session] [--full] [--raw]` (alias: `ctx ls`) | `ctx list $SID`<br>`ctx list $SID --full`<br>`ctx list $SID --raw` | Print all visible keys with type tags, rendering `$VAR` placeholders by default. Strings and documents are shown as first-line previews unless `--full` shows the complete value; `--raw` skips rendering. |
 | `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
-| `ctx render [--ignore-missing] [session] <key>` | `ctx render $SID PROMPT` | Render a stored template by substituting `$VAR` placeholders from visible context. |
 | `ctx execute [session] <template>` | `ctx execute $SID review` | Execute a trigger template from the trigger directory. The filename extension is optional. |
 | `ctx tree [session_id] [-a] [--format text\|json]` | `ctx tree`<br>`ctx tree $SID`<br>`ctx tree -a` | Render the session hierarchy as an ASCII tree, showing ids and key/value pairs. Scoped to `session_id` (or `CTX_ID` if set) — its ancestors and descendants only. Use `-a`/`--all`, or omit both `session_id` and `CTX_ID`, to show the full tree of all sessions. |
 | `ctx --version` | `ctx --version` | Print the build version. |
@@ -106,10 +105,10 @@ Every ctx entry has a value type:
 | `file_ref` | `ctx set KEY --path ./path` | Current file content | Omitted by default; include path with `--files-as-paths` |
 | `file_bin` | Reserved | Not implemented | Not exported |
 
-`ctx render` resolves all implemented types to content before template
-substitution, so consumers can use `$KEY` without knowing whether it came from a
-string, document, or file reference. If a referenced file no longer exists,
-`ctx get` and `ctx render` fail with a clear error.
+`ctx get` and `ctx list` resolve all implemented types to content before
+template substitution, so consumers can use `$KEY` without knowing whether it
+came from a string, document, or file reference. If a referenced file no
+longer exists, both fail with a clear error.
 
 Documents are limited to 500KB. Use `--path` for larger local files or for
 content that should be read fresh each time.
@@ -214,7 +213,7 @@ CHILD=$(ctx session review-agent)
 # Commands can now omit the session argument.
 ctx set PROJECT_ID "gitlab-org/myproject"
 ctx get PROJECT_ID
-ctx show
+ctx list
 ```
 
 If you need to override the implicit parent, use `--parent`:
@@ -364,7 +363,7 @@ references are shown as paths.
 
 - **SQLite backend** – guarantees atomic writes and handles concurrent reads/writes without external locking.
 - **Hierarchical lookup** – `ctx get` walks up the parent chain (max 50 hops) so children automatically inherit keys from ancestors. Later entries shadow earlier ones.
-- **Typed values** – scalar strings, long-form documents, and local file references resolve consistently through `ctx get` and `ctx render`.
+- **Typed values** – scalar strings, long-form documents, and local file references resolve consistently through `ctx get` and `ctx list`.
 - **Session IDs** – generated with `crypto/rand`, yielding an eight‑character lowercase hex string (`xxxxxxxx`). Collisions are extremely unlikely.
 - **Depth limit** – prevents infinite loops in corrupted data (e.g., circular parent references).
 - **Portable** – No external dependencies; the only required runtime is the SQLite driver bundled via Go modules.

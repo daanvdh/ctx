@@ -7,32 +7,34 @@ import (
 	"ctx/internal/app"
 )
 
-func Show(ctx context.Context, args []string) error {
+func List(ctx context.Context, args []string) error {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx show [session_id] [--full] [--render]
+		fmt.Println(`Usage: ctx list [session_id] [--full] [--raw]
 
-Show all entries visible to a session. By default, doc and file values
-are previewed (first characters only). --full shows the complete
-value instead. --render additionally substitutes $VAR placeholders
-(recursively, up to depth 10) before display. Both flags can be
-combined.`)
+List all entries visible to a session, rendering $VAR placeholders
+(recursively, up to depth 10) by default. Doc and file values are
+previewed (first characters only) unless --full shows the complete
+value. --raw skips rendering and shows unresolved values. Both flags
+can be combined.`)
 		return nil
 	}
 
+	raw := false
 	opts := app.ShowOptions{}
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
 		case "--full":
 			opts.Full = true
-		case "--render":
-			opts.Render = true
+		case "--raw":
+			raw = true
 		default:
 			filtered = append(filtered, arg)
 		}
 	}
+	opts.Render = !raw
 	if len(filtered) > 1 {
-		return usage("show", "ctx show [session_id] [--full] [--render]")
+		return usage("list", "ctx list [session_id] [--full] [--raw]")
 	}
 
 	sessionID, err := sessionArg(filtered, len(filtered) == 1)
