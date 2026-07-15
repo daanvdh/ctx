@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"ctx/internal/config"
 	"ctx/internal/model"
@@ -145,49 +146,50 @@ func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, erro
 
 // GetRendered returns a key's value with $VAR placeholders substituted
 // recursively from the session's visible context, matching the rendering
-// ctx list --full performs. file_ref entries reference files living outside
-// ctx and are returned unrendered, since their content wasn't authored with
-// ctx's $VAR syntax in mind and may contain it unintentionally. If
-// allowMissing is false and a placeholder can't be resolved, the returned
-// error suggests --allow-missing.
+// ctx list --full performs. If allowMissing is false and a placeholder can't
+// be resolved, the returned error suggests --allow-missing.
 func (a *App) GetRendered(ctx context.Context, sessionID, key string, allowMissing bool) (string, error) {
 	entry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
 	}
-	content, err := resolveEntryContent(key, entry, "get")
-	if err != nil {
-		return "", err
-	}
-	if entry.ValueType == model.ValueTypeFileRef {
-		return content, nil
-	}
-
-	entries, err := a.store.ResolveEntries(ctx, sessionID)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := resolveEntries(entries, "render")
-	if err != nil {
-		return "", err
-	}
-	rendered, err := render.TemplateStringRecursive(content, resolved, render.TemplateOptions{AllowMissing: allowMissing}, render.MaxRenderDepth)
-	if err != nil {
-		return "", fmt.Errorf("%w (use --allow-missing to leave unresolved placeholders unchanged)", err)
-	}
-	return rendered, nil
+	return renderEntryValue(key, entry, false, allowMissing, func() (map[string]string, error) {
+		entries, err := a.store.ResolveEntries(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		return resolveEntries(entries, "render")
+	})
 }
 
 // GetRaw returns a key's stored value without rendering $VAR placeholders.
 // For file_ref entries it returns the referenced path itself rather than the
 // file's content, since --raw is meant to expose exactly what's stored for
-// the key.
+// the key. --raw never renders, so a missing placeholder can never make it
+// fail; there is deliberately no allowMissing parameter here.
 func (a *App) GetRaw(ctx context.Context, sessionID, key string) (string, error) {
 	entry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
 	}
-	if entry.ValueType == model.ValueTypeFileRef {
+	return renderEntryValue(key, entry, true, false, nil)
+}
+
+// renderEntryValue turns a stored entry into the string ctx get and ctx list
+// expose for it, so both commands apply the same rules for a given entry
+// instead of duplicating (and drifting on) this decision. raw returns the
+// entry's stored content unprocessed — the referenced path itself for
+// file_ref, since that's what's stored in the db, and it's what --raw is
+// meant to expose. Otherwise content is resolved (file_ref reads its
+// file) and, unless the entry is a file_ref, rendered against the context
+// resolveContext returns: file_ref entries reference files living outside
+// ctx that weren't authored with ctx's $VAR syntax in mind, so rendering
+// them could break on unrelated "$" occurrences. resolveContext is called
+// lazily, and only when rendering is actually about to happen, so a raw or
+// file_ref lookup never pays for (or can be broken by) resolving the rest
+// of the session.
+func renderEntryValue(key string, entry model.Entry, raw bool, allowMissing bool, resolveContext func() (map[string]string, error)) (string, error) {
+	if raw && entry.ValueType == model.ValueTypeFileRef {
 		if _, err := os.Stat(entry.Value); err != nil {
 			if os.IsNotExist(err) {
 				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --path <new-path>", entry.Value, key)
@@ -196,7 +198,24 @@ func (a *App) GetRaw(ctx context.Context, sessionID, key string) (string, error)
 		}
 		return entry.Value, nil
 	}
-	return resolveEntryContent(key, entry, "get")
+
+	content, err := resolveEntryContent(key, entry, "get")
+	if err != nil {
+		return "", err
+	}
+	if raw || entry.ValueType == model.ValueTypeFileRef {
+		return content, nil
+	}
+
+	resolved, err := resolveContext()
+	if err != nil {
+		return "", err
+	}
+	rendered, err := render.TemplateStringRecursive(content, resolved, render.TemplateOptions{AllowMissing: allowMissing}, render.MaxRenderDepth)
+	if err != nil {
+		return "", fmt.Errorf("%w (use --allow-missing to leave unresolved placeholders unchanged)", err)
+	}
+	return rendered, nil
 }
 
 func (a *App) GetPreview(ctx context.Context, sessionID, key string, raw bool) (string, error) {
@@ -278,14 +297,11 @@ func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]s
 	if err != nil {
 		return nil, err
 	}
-
-	var resolvedForRender map[string]string
-	if opts.Render {
-		resolvedForRender, err = resolveEntries(entries, "render")
-		if err != nil {
-			return nil, err
-		}
-	}
+	// Memoized so the whole session is resolved at most once for this call,
+	// and not at all when every entry is shown raw or is a file_ref.
+	resolveContext := sync.OnceValues(func() (map[string]string, error) {
+		return resolveEntries(entries, "render")
+	})
 
 	lines := make([]string, 0, len(entries))
 	for _, key := range sortedEntryKeys(entries) {
@@ -295,15 +311,9 @@ func (a *App) Show(ctx context.Context, sessionID string, opts ShowOptions) ([]s
 			continue
 		}
 
-		content, err := resolveEntryContent(key, entry, "show")
+		content, err := renderEntryValue(key, entry, !opts.Render, false, resolveContext)
 		if err != nil {
 			return nil, err
-		}
-		if opts.Render {
-			content, err = render.TemplateStringRecursive(content, resolvedForRender, render.TemplateOptions{}, render.MaxRenderDepth)
-			if err != nil {
-				return nil, err
-			}
 		}
 		if !opts.Full {
 			content = textutil.Preview(content, textutil.PreviewChars)
