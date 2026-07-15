@@ -1,16 +1,36 @@
-# ctx — Agent Context Manager
+# ctx — Deterministic AI Workflows
 
 [![CI](https://github.com/daanvdh/ctx/actions/workflows/ci.yml/badge.svg)](https://github.com/daanvdh/ctx/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/daanvdh/ctx)](https://github.com/daanvdh/ctx/releases)
 
-`ctx` is a tiny command-line tool that provides a hierarchical, typed key-value
-store for agent‑oriented workflows. It lets an orchestrator create *sessions* (a
-lightweight context) and attach scalar strings, long-form documents, or file
-references to them. Sub‑agents can inherit the data of their ancestors by simply
-receiving the session identifier.
+**Do more with simpler models.**
 
-The entire state lives in an SQLite database (`ctx.sqlite`) which is safe for
-concurrent access, has atomic writes and does not require any external service.
+Deterministic workflows should run deterministically. Today we let agents do everything, which inflates prompt and orchestration complexity, burns tokens, and sometimes forces a stronger model than the task actually needs.
+
+***ctx is a key-value store with built-in shell scripting that triggers on context changes.***
+
+ctx brings back control over the workflow while leaving the reasoning to your favorite harness. You select a task for execution; ctx picks up the changed state, creates the branch, pulls the task and project data, and constructs the prompt — all deterministically, no LLM needed. The harness receives a prompt it can reason from immediately, without a single tool call first.
+
+Anything you can run from a shell, ctx can run deterministically and add to the context.
+
+## Features
+
+- Manage context by session.
+- Reference any value inside any prompt, e.g. `$TASK_ID`.
+- Run any script from ctx.
+- Trigger any script on any state change.
+- Write to ctx from external tools via its CLI or MCP.
+- Call any harness with precise control over its main prompt.
+- Collect harness output to chain the next trigger.
+
+## Use Cases
+
+- **Build-and-report loop** — A trigger runs your build on any code change, writes the full log to ctx as `BUILD_LOG`, and sets `STATUS=FAILED` when it breaks. All deterministic; nothing is asked of a model.
+- **Auto-fix on failure** — A second trigger fires on `STATUS=FAILED`, greps the failing test out of `BUILD_LOG`, adds it to the prompt, and calls your harness to fix only that test. The harness starts already knowing what broke.
+- **Multi-harness handoff** — Route each phase to the tool that's best at it: a reasoning-strong model plans and writes the steps to ctx, a tool-strong harness picks up that context and implements. ctx carries the state between them, so neither redoes the other's work.
+- **Delegate tool-calling from a small model** — A local model that reasons well but handles tools poorly designs the run up front; ctx executes every tool call deterministically and leaves the model only the thinking.
+- **Scheduled watch** — A cron-style trigger (`schedule` + `ctx tick`) polls a project on an interval and starts a run when something changes, instead of an agent sitting idle in a loop.
+- **Write from anywhere** — CI, a git hook, or another tool writes to ctx via the CLI or MCP, and that state change fires the right downstream trigger. ctx becomes the shared state your tools coordinate through.
 
 ## Quick Install
 
