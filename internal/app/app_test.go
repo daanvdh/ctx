@@ -516,7 +516,7 @@ func TestListRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
 		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if got != "GREETING [string] hello $NOPE" {
+	if got != "GREETING hello $NOPE" {
 		t.Fatalf("List = %q, want unresolved placeholder left unchanged", got)
 	}
 }
@@ -535,7 +535,7 @@ func TestListRenderSkipsFileRefContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [file_ref] price: $5\n"
+	want := "SPEC [path] price: $5\n"
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
 	}
@@ -555,7 +555,7 @@ func TestListFullRawShowsFileRefPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [file_ref] " + path
+	want := "SPEC [path] " + path
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want path %q", strings.Join(lines, "\n"), want)
 	}
