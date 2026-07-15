@@ -373,10 +373,14 @@ references are shown as paths.
 ## Development
 
 ```bash
+make build   # build ./bin/ctx, stamped with the version from VERSION
 make test    # run unit tests
 make lint    # static analysis with golangci‑lint
 make clean   # remove ./bin
 ```
+
+To cut a release, bump [`VERSION`](VERSION) and add an entry to
+[`CHANGELOG.md`](CHANGELOG.md).
 
 Contributions are welcome. Please open an issue or a pull request for bugs,
 features, or documentation improvements.
