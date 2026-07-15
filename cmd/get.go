@@ -7,36 +7,37 @@ import (
 
 func Get(ctx context.Context, args []string) error {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx get [session_id] <key> [--raw] [--path|--preview]
+		fmt.Println(`Usage: ctx get [session_id] <key> [--raw] [--allow-missing]
 
 Get a key's value from a session (or an ancestor), rendering $VAR
-placeholders by default. --raw returns the unrendered value. --path
-writes doc content to a temp file and prints its path (always raw);
---preview prints a truncated preview instead of the full value.`)
+placeholders by default. file_ref entries reference files living outside
+ctx and are never rendered, since that content wasn't authored with ctx's
+$VAR syntax in mind.
+
+--raw returns the value unrendered instead: for file_ref entries this is
+the referenced path itself; for string and doc entries it's the stored
+value with no placeholder substitution.
+
+--allow-missing leaves unresolved $VAR placeholders unchanged instead of
+failing.`)
 		return nil
 	}
 
-	asPath := false
-	preview := false
 	raw := false
+	allowMissing := false
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
-		case "--path":
-			asPath = true
-		case "--preview":
-			preview = true
 		case "--raw":
 			raw = true
+		case "--allow-missing":
+			allowMissing = true
 		default:
 			filtered = append(filtered, arg)
 		}
 	}
-	if asPath && preview {
-		return fmt.Errorf("--path and --preview are mutually exclusive")
-	}
 	if len(filtered) != 1 && len(filtered) != 2 {
-		return usage("get", "ctx get [session_id] <key> [--raw] [--path|--preview]")
+		return usage("get", "ctx get [session_id] <key> [--raw] [--allow-missing]")
 	}
 
 	hasSession := len(filtered) == 2
@@ -55,15 +56,10 @@ writes doc content to a temp file and prints its path (always raw);
 		return err
 	}
 	var value string
-	switch {
-	case asPath:
-		value, err = a.GetPath(ctx, sessionID, key)
-	case preview:
-		value, err = a.GetPreview(ctx, sessionID, key, raw)
-	case raw:
-		value, err = a.GetValue(ctx, sessionID, key)
-	default:
-		value, err = a.GetRendered(ctx, sessionID, key)
+	if raw {
+		value, err = a.GetRaw(ctx, sessionID, key)
+	} else {
+		value, err = a.GetRendered(ctx, sessionID, key, allowMissing)
 	}
 	if err != nil {
 		return err

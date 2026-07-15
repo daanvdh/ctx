@@ -145,12 +145,24 @@ func (a *App) GetValue(ctx context.Context, sessionID, key string) (string, erro
 
 // GetRendered returns a key's value with $VAR placeholders substituted
 // recursively from the session's visible context, matching the rendering
-// ctx list --full performs.
-func (a *App) GetRendered(ctx context.Context, sessionID, key string) (string, error) {
-	content, err := a.GetValue(ctx, sessionID, key)
+// ctx list --full performs. file_ref entries reference files living outside
+// ctx and are returned unrendered, since their content wasn't authored with
+// ctx's $VAR syntax in mind and may contain it unintentionally. If
+// ignoreMissing is false and a placeholder can't be resolved, the returned
+// error suggests --allow-missing.
+func (a *App) GetRendered(ctx context.Context, sessionID, key string, ignoreMissing bool) (string, error) {
+	entry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
 	}
+	content, err := resolveEntryContent(key, entry, "get")
+	if err != nil {
+		return "", err
+	}
+	if entry.ValueType == model.ValueTypeFileRef {
+		return content, nil
+	}
+
 	entries, err := a.store.ResolveEntries(ctx, sessionID)
 	if err != nil {
 		return "", err
@@ -159,31 +171,23 @@ func (a *App) GetRendered(ctx context.Context, sessionID, key string) (string, e
 	if err != nil {
 		return "", err
 	}
-	return render.TemplateStringRecursive(content, resolved, render.TemplateOptions{}, render.MaxRenderDepth)
+	rendered, err := render.TemplateStringRecursive(content, resolved, render.TemplateOptions{IgnoreMissing: ignoreMissing}, render.MaxRenderDepth)
+	if err != nil {
+		return "", fmt.Errorf("%w (use --allow-missing to leave unresolved placeholders unchanged)", err)
+	}
+	return rendered, nil
 }
 
-func (a *App) GetPath(ctx context.Context, sessionID, key string) (string, error) {
+// GetRaw returns a key's stored value without rendering $VAR placeholders.
+// For file_ref entries it returns the referenced path itself rather than the
+// file's content, since --raw is meant to expose exactly what's stored for
+// the key.
+func (a *App) GetRaw(ctx context.Context, sessionID, key string) (string, error) {
 	entry, err := a.store.GetEntry(ctx, sessionID, key)
 	if err != nil {
 		return "", err
 	}
-	switch entry.ValueType {
-	case model.ValueTypeString:
-		return entry.Value, nil
-	case model.ValueTypeDoc:
-		file, err := os.CreateTemp("", "ctx-*")
-		if err != nil {
-			return "", fmt.Errorf("write temp doc: %w", err)
-		}
-		if _, err := file.WriteString(entry.Value); err != nil {
-			_ = file.Close()
-			return "", fmt.Errorf("write temp doc: %w", err)
-		}
-		if err := file.Close(); err != nil {
-			return "", fmt.Errorf("write temp doc: %w", err)
-		}
-		return file.Name(), nil
-	case model.ValueTypeFileRef:
+	if entry.ValueType == model.ValueTypeFileRef {
 		if _, err := os.Stat(entry.Value); err != nil {
 			if os.IsNotExist(err) {
 				return "", fmt.Errorf("file_ref path no longer exists: %s. Update with: ctx set %s --path <new-path>", entry.Value, key)
@@ -191,9 +195,8 @@ func (a *App) GetPath(ctx context.Context, sessionID, key string) (string, error
 			return "", fmt.Errorf("stat file_ref path %s: %w", entry.Value, err)
 		}
 		return entry.Value, nil
-	default:
-		return "", fmt.Errorf("%s value type is not implemented", entry.ValueType)
 	}
+	return resolveEntryContent(key, entry, "get")
 }
 
 func (a *App) GetPreview(ctx context.Context, sessionID, key string, raw bool) (string, error) {
@@ -202,7 +205,7 @@ func (a *App) GetPreview(ctx context.Context, sessionID, key string, raw bool) (
 	if raw {
 		value, err = a.GetValue(ctx, sessionID, key)
 	} else {
-		value, err = a.GetRendered(ctx, sessionID, key)
+		value, err = a.GetRendered(ctx, sessionID, key, false)
 	}
 	if err != nil {
 		return "", err
