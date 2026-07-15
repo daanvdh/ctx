@@ -233,9 +233,9 @@ func TestGetFileRefReadsContentAndPath(t *testing.T) {
 	if value != "line1\nline2\n" {
 		t.Fatalf("file_ref value = %q, want file content", value)
 	}
-	gotPath, err := a.GetPath(context.Background(), "s1", "SPEC")
+	gotPath, err := a.GetRaw(context.Background(), "s1", "SPEC")
 	if err != nil {
-		t.Fatalf("GetPath error: %v", err)
+		t.Fatalf("GetRaw error: %v", err)
 	}
 	if gotPath != path {
 		t.Fatalf("path = %q, want %q", gotPath, path)
@@ -262,22 +262,18 @@ func TestSetFileRefStoresAbsolutePath(t *testing.T) {
 	}
 }
 
-func TestGetDocPathWritesTempFileAndPreview(t *testing.T) {
+func TestGetDocRawAndPreview(t *testing.T) {
 	content := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n"
 	a := NewWithStore(&fakeStore{entries: map[string]model.Entry{
 		"DOC": model.NewEntry(content, model.ValueTypeDoc),
 	}})
 
-	path, err := a.GetPath(context.Background(), "s1", "DOC")
+	raw, err := a.GetRaw(context.Background(), "s1", "DOC")
 	if err != nil {
-		t.Fatalf("GetPath error: %v", err)
+		t.Fatalf("GetRaw error: %v", err)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read temp doc: %v", err)
-	}
-	if string(data) != content {
-		t.Fatalf("temp content = %q, want doc", string(data))
+	if raw != content {
+		t.Fatalf("raw = %q, want %q", raw, content)
 	}
 	preview, err := a.GetPreview(context.Background(), "s1", "DOC", true)
 	if err != nil {
@@ -301,12 +297,94 @@ func TestGetRenderedSubstitutesPlaceholdersRecursively(t *testing.T) {
 		},
 	})
 
-	got, err := a.GetRendered(context.Background(), "s1", "GREETING")
+	got, err := a.GetRendered(context.Background(), "s1", "GREETING", false)
 	if err != nil {
 		t.Fatalf("GetRendered error: %v", err)
 	}
 	if got != "hello ada lovelace" {
 		t.Fatalf("GetRendered = %q, want recursively rendered value", got)
+	}
+}
+
+func TestGetRenderedSkipsFileRefContent(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "doc.txt")
+	if err := os.WriteFile(path, []byte("price: $5\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{
+		entries: map[string]model.Entry{
+			"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+		},
+		resolvedEntries: map[string]model.Entry{
+			"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+		},
+	})
+
+	got, err := a.GetRendered(context.Background(), "s1", "SPEC", false)
+	if err != nil {
+		t.Fatalf("GetRendered error: %v", err)
+	}
+	if got != "price: $5\n" {
+		t.Fatalf("GetRendered = %q, want unrendered file content", got)
+	}
+}
+
+func TestGetRenderedAllowMissingLeavesPlaceholder(t *testing.T) {
+	a := NewWithStore(&fakeStore{
+		entries: map[string]model.Entry{
+			"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+		},
+		resolvedEntries: map[string]model.Entry{
+			"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+		},
+	})
+
+	if _, err := a.GetRendered(context.Background(), "s1", "GREETING", false); err == nil {
+		t.Fatalf("GetRendered error = nil, want missing placeholder error")
+	} else if !strings.Contains(err.Error(), "--allow-missing") {
+		t.Fatalf("GetRendered error = %q, want --allow-missing hint", err)
+	}
+
+	got, err := a.GetRendered(context.Background(), "s1", "GREETING", true)
+	if err != nil {
+		t.Fatalf("GetRendered error: %v", err)
+	}
+	if got != "hello $NAME" {
+		t.Fatalf("GetRendered = %q, want placeholder left unchanged", got)
+	}
+}
+
+func TestGetRawReturnsPathForFileRef(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "doc.txt")
+	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{entries: map[string]model.Entry{
+		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+	}})
+
+	got, err := a.GetRaw(context.Background(), "s1", "SPEC")
+	if err != nil {
+		t.Fatalf("GetRaw error: %v", err)
+	}
+	if got != path {
+		t.Fatalf("GetRaw = %q, want path %q", got, path)
+	}
+}
+
+func TestGetRawReturnsUnrenderedStringValue(t *testing.T) {
+	a := NewWithStore(&fakeStore{entries: map[string]model.Entry{
+		"GREETING": model.NewEntry("hello $NAME", model.ValueTypeString),
+	}})
+
+	got, err := a.GetRaw(context.Background(), "s1", "GREETING")
+	if err != nil {
+		t.Fatalf("GetRaw error: %v", err)
+	}
+	if got != "hello $NAME" {
+		t.Fatalf("GetRaw = %q, want unrendered value", got)
 	}
 }
 
@@ -430,6 +508,61 @@ func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 	}
 }
 
+func TestShowRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"GREETING": model.NewEntry("hello $NOPE", model.ValueTypeString),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if got != "GREETING [string] hello $NOPE" {
+		t.Fatalf("Show = %q, want unresolved placeholder left unchanged", got)
+	}
+}
+
+func TestShowRenderSkipsFileRefContent(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "doc.txt")
+	if err := os.WriteFile(path, []byte("price: $5\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true, Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "SPEC [file_ref] price: $5\n"
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
+	}
+}
+
+func TestShowFullRawShowsFileRefPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "doc.txt")
+	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "SPEC [file_ref] " + path
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %q, want path %q", strings.Join(lines, "\n"), want)
+	}
+}
+
 func TestRenderUsesInjectedStore(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE"},
@@ -471,7 +604,7 @@ func TestRenderResolvesDocAndFileRefContent(t *testing.T) {
 	}
 }
 
-func TestRenderIgnoreMissing(t *testing.T) {
+func TestRenderAllowMissing(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE for $OWNER"},
 		resolved: map[string]string{"ISSUE": "22"},

@@ -20,7 +20,7 @@ func Help(_ context.Context, _ []string) error {
 	fmt.Println("                                              --no-var/--no-child skip (recursive) or fail on (non-recursive) nodes with variables/children.")
 	fmt.Println("  set <session> <key> <value>                Set a key in a session")
 	fmt.Println("  rm [session] <entry>                       Remove an entry from a session")
-	fmt.Println("  get <session> <key> [--raw]                Get a key from a session, rendering placeholders by default")
+	fmt.Println("  get <session> <key> [--raw|--allow-missing]  Get a key from a session, rendering placeholders by default")
 	fmt.Println("  share <from> <to>                          Share one session's context with another")
 	fmt.Println("  export <session>                           Export all visible keys")
 	fmt.Println("  list [session_id] [--full] [--raw]         List all visible entries, rendered by default (alias: ls)")

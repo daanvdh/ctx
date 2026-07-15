@@ -58,7 +58,7 @@ func TemplateStringRecursive(tmpl string, resolved map[string]string, opts Templ
 }
 
 type TemplateOptions struct {
-	IgnoreMissing bool
+	AllowMissing bool
 }
 
 func TemplateStringWithOptions(tmpl string, resolved map[string]string, opts TemplateOptions) (string, error) {
@@ -93,7 +93,7 @@ func TemplateStringWithOptions(tmpl string, resolved map[string]string, opts Tem
 
 		value, ok := resolved[name]
 		if !ok {
-			if opts.IgnoreMissing {
+			if opts.AllowMissing {
 				out.WriteByte('$')
 				out.WriteString(name)
 			} else {

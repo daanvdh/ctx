@@ -81,8 +81,8 @@ go install github.com/daanvdh/ctx@latest
 | `ctx set [session] <key> --doc [text]` | `ctx set $SID STORY --doc "Fix issue 45"`<br>`ctx set $SID SPEC --doc < openapi.md` | Store long-form text as a document. If no text argument is provided, content is read from stdin. Documents are excluded from plain `ctx export` and shown as previews in `ctx list` and `ctx tree`. |
 | `ctx set [session] <key> --path <path>` | `ctx set $SID API_SPEC --path ./openapi.yaml` | Store a reference to an existing local file. The path must exist when it is set. Reads resolve file content at use time. |
 | `ctx rm [session] <entry>` | `ctx rm $SID PROJECT_ID`<br>`CTX_ID=$SID ctx rm PROJECT_ID` | Remove an entry from the specified session. |
-| `ctx get [session] <key> [--raw] [--path\|--preview]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --preview`<br>`ctx get $SID STORY --path`<br>`ctx get $SID STORY --raw` | Retrieve a visible value, searching the session, shared contexts, and then ancestors, substituting `$VAR` placeholders by default. `--raw` returns the unrendered value. `--preview` prints the first 10 lines (rendered unless combined with `--raw`). `--path` returns the stored path for `file_ref`, writes the raw `doc` content to a temp file and returns that path, and returns the value for strings — always unrendered. |
-| `ctx list [session] [--full] [--raw]` (alias: `ctx ls`) | `ctx list $SID`<br>`ctx list $SID --full`<br>`ctx list $SID --raw` | Print all visible keys with type tags, rendering `$VAR` placeholders by default. Strings and documents are shown as first-line previews unless `--full` shows the complete value; `--raw` skips rendering. |
+| `ctx get [session] <key> [--raw\|--allow-missing]` | `ctx get $SID PROJECT_ID`<br>`ctx get $SID STORY --raw`<br>`ctx get $SID STORY --allow-missing` | Retrieve a visible value, searching the session, shared contexts, and then ancestors, substituting `$VAR` placeholders by default. `file_ref` values are never rendered, since they reference files living outside ctx that may contain `$`-syntax unintentionally. `--raw` returns the value unprocessed instead: the stored path for `file_ref`, or the unrendered value for `string`/`doc` — since it never renders, missing placeholders can't make it fail. `--allow-missing` renders but leaves unresolved `$VAR` placeholders unchanged instead of failing; mutually exclusive with `--raw`. |
+| `ctx list [session] [--full] [--raw]` (alias: `ctx ls`) | `ctx list $SID`<br>`ctx list $SID --full`<br>`ctx list $SID --raw` | Print all visible keys with type tags, rendering `$VAR` placeholders by default. Strings and documents are shown as first-line previews unless `--full` shows the complete value; `--raw` skips rendering. Unlike `ctx get`, a listing never fails over one entry's unresolved placeholder — it's left unchanged instead. |
 | `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
 | `ctx execute [session] <template>` | `ctx execute $SID review` | Execute a trigger template from the trigger directory. The filename extension is optional. |
@@ -102,13 +102,15 @@ Every ctx entry has a value type:
 |---|---|---|---|
 | `string` | `ctx set KEY value` | Stored value | Included by default |
 | `doc` | `ctx set KEY --doc "..."` or `ctx set KEY --doc < file.md` | Full document content | Omitted by default; include with `--include-docs` |
-| `file_ref` | `ctx set KEY --path ./path` | Current file content | Omitted by default; include path with `--files-as-paths` |
+| `file_ref` | `ctx set KEY --path ./path` | Current file content, unrendered | Omitted by default; include path with `--files-as-paths` |
 | `file_bin` | Reserved | Not implemented | Not exported |
 
-`ctx get` and `ctx list` resolve all implemented types to content before
-template substitution, so consumers can use `$KEY` without knowing whether it
-came from a string, document, or file reference. If a referenced file no
-longer exists, both fail with a clear error.
+`ctx get` and `ctx list` resolve `string` and `doc` types to content and
+substitute `$VAR` placeholders before returning it, so consumers can use
+`$KEY` without knowing whether it came from a string or a document.
+`file_ref` content is returned as-is instead: it references a file living
+outside ctx that wasn't authored with ctx's `$VAR` syntax in mind. If a
+referenced file no longer exists, both fail with a clear error.
 
 Documents are limited to 500KB. Use `--path` for larger local files or for
 content that should be read fresh each time.
@@ -245,8 +247,8 @@ echo "$DISCUSSION_ID" # abc123def456
 
 # Bonus: reference files through context.
 ctx set $ROOT REPORT --path /tmp/report.txt
-ctx get $CHILD REPORT                  # prints the file content from the child's view
-ctx get $CHILD REPORT --path           # prints /tmp/report.txt
+ctx get $CHILD REPORT                  # prints the file content from the child's view, unrendered
+ctx get $CHILD REPORT --raw            # prints /tmp/report.txt
 ```
 
 ## Trigger Templates
