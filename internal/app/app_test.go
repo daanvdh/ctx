@@ -506,6 +506,61 @@ func TestShowRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 	}
 }
 
+func TestShowRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"GREETING": model.NewEntry("hello $NOPE", model.ValueTypeString),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if got != "GREETING [string] hello $NOPE" {
+		t.Fatalf("Show = %q, want unresolved placeholder left unchanged", got)
+	}
+}
+
+func TestShowRenderSkipsFileRefContent(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "doc.txt")
+	if err := os.WriteFile(path, []byte("price: $5\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true, Render: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "SPEC [file_ref] price: $5\n"
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
+	}
+}
+
+func TestShowFullRawShowsFileRefPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "doc.txt")
+	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	a := NewWithStore(&fakeStore{resolvedEntries: map[string]model.Entry{
+		"SPEC": model.NewEntry(path, model.ValueTypeFileRef),
+	}})
+
+	lines, err := a.Show(context.Background(), "s1", ShowOptions{Full: true})
+	if err != nil {
+		t.Fatalf("Show error: %v", err)
+	}
+	want := "SPEC [file_ref] " + path
+	if strings.Join(lines, "\n") != want {
+		t.Fatalf("Show = %q, want path %q", strings.Join(lines, "\n"), want)
+	}
+}
+
 func TestRenderUsesInjectedStore(t *testing.T) {
 	a := NewWithStore(&fakeStore{
 		values:   map[string]string{"PROMPT": "Fix $ISSUE"},
