@@ -28,6 +28,8 @@ type Settings struct {
 	// the working directory is at or below that path; the most specific
 	// matching path wins and beats DefaultSession.
 	DefaultSessions map[string]string `yaml:"default_sessions,omitempty"`
+	// MaxTriggerDepth overrides the trigger chain depth limit (default 5).
+	MaxTriggerDepth int `yaml:"max_trigger_depth,omitempty"`
 }
 
 // DefaultSessionFor returns the configured default session for cwd: the

@@ -1276,7 +1276,7 @@ func TestTriggerEnvIncrementsDepth(t *testing.T) {
 func TestSetValueSkipsTriggersAtMaxDepth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("CTX_TRIGGER_DEPTH", strconv.Itoa(maxTriggerDepth))
+	t.Setenv("CTX_TRIGGER_DEPTH", strconv.Itoa(maxTriggerDepth()))
 	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
@@ -1295,6 +1295,21 @@ func TestSetValueSkipsTriggersAtMaxDepth(t *testing.T) {
 	}
 	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
 		t.Fatal("expected trigger not to fire at max depth")
+	}
+}
+
+func TestMaxTriggerDepthConfigurable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".config", "ctx")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "settings.yml"), []byte("max_trigger_depth: 12\n"), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if got := maxTriggerDepth(); got != 12 {
+		t.Fatalf("maxTriggerDepth = %d, want 12", got)
 	}
 }
 

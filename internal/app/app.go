@@ -137,8 +137,8 @@ func (a *App) setEntryAtDepth(ctx context.Context, sessionID, key string, entry 
 	if os.Getenv("CTX_SUPPRESS_TRIGGERS") == "1" {
 		return nil
 	}
-	if depth >= maxTriggerDepth {
-		fmt.Fprintf(a.stderr, "ctx: trigger depth limit (%d) reached; not firing triggers for %s\n", maxTriggerDepth, key)
+	if limit := maxTriggerDepth(); depth >= limit {
+		fmt.Fprintf(a.stderr, "ctx: trigger depth limit (%d) reached; not firing triggers for %s\n", limit, key)
 		return nil
 	}
 	if oldErr != nil {

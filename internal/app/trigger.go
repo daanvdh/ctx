@@ -26,10 +26,19 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// maxTriggerDepth bounds trigger chaining: a ctx write from inside a trigger
-// script fires downstream triggers as usual, each nesting level incrementing
-// CTX_TRIGGER_DEPTH, until this limit stops runaway loops.
-const maxTriggerDepth = 5
+// defaultMaxTriggerDepth bounds trigger chaining: a ctx write from inside a
+// trigger script fires downstream triggers as usual, each nesting level
+// incrementing CTX_TRIGGER_DEPTH, until the limit stops runaway loops.
+const defaultMaxTriggerDepth = 5
+
+// maxTriggerDepth returns the chain depth limit, overridable with
+// max_trigger_depth in settings.yml for long agent loops.
+func maxTriggerDepth() int {
+	if s, err := config.LoadSettings(); err == nil && s.MaxTriggerDepth > 0 {
+		return s.MaxTriggerDepth
+	}
+	return defaultMaxTriggerDepth
+}
 
 // triggerDepth returns the current trigger nesting depth from the environment.
 func triggerDepth() int {
