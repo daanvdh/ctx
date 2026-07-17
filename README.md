@@ -359,13 +359,13 @@ If no persistent `ctx serve` process is running, skip `schedule` entirely and po
 
 ```text
 5f2a1c9b
- PROJECT_ID gitlab-org/myproject
- MR_IID 412
+ PROJECT_ID: gitlab-org/myproject
+ MR_IID: 412
 ├── 8e7d3a4f
-│     DISCUSSION_ID abc123def456
+│     DISCUSSION_ID: abc123def456
 └── a1b2c3d4
-      REPORT [path] /tmp/report.txt
-      STORY Fix issue 45 ...
+      REPORT: [path] /tmp/report.txt
+      STORY: Fix issue 45 ...
 ```
 
 The tree displays sessions sorted alphabetically, with child nodes indented.

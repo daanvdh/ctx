@@ -447,7 +447,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := []string{"A 1", "B 2"}
+	want := []string{"A: 1", "B: 2"}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("List = %v, want %v", lines, want)
 	}
@@ -467,7 +467,7 @@ func TestListFormatsFileRefAsPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [path] " + path
+	want := "SPEC: [path] " + path
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %v, want %q", lines, want)
 	}
@@ -486,7 +486,7 @@ func TestListPreviewsFirstLine(t *testing.T) {
 	if strings.Contains(got, `\n`) || strings.Contains(got, "hidden line") {
 		t.Fatalf("List = %q, want first-line previews only", got)
 	}
-	if !strings.Contains(got, "TEXT text line") || strings.Contains(got, "TEXT [") {
+	if !strings.Contains(got, "TEXT: text line") || strings.Contains(got, "TEXT [") {
 		t.Fatalf("List = %q, want string preview without a type label", got)
 	}
 }
@@ -500,7 +500,7 @@ func TestListFullShowsUntruncatedContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "TEXT text line\nhidden line"
+	want := "TEXT: text line\nhidden line"
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want %q", strings.Join(lines, "\n"), want)
 	}
@@ -519,7 +519,7 @@ func TestListRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "GREETING hello ada lovelace") {
+	if !strings.Contains(got, "GREETING: hello ada lovelace") {
 		t.Fatalf("List = %q, want recursively rendered GREETING", got)
 	}
 }
@@ -534,7 +534,7 @@ func TestListRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
 		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if got != "GREETING hello $NOPE" {
+	if got != "GREETING: hello $NOPE" {
 		t.Fatalf("List = %q, want unresolved placeholder left unchanged", got)
 	}
 }
@@ -553,7 +553,7 @@ func TestListRenderSkipsFileRefContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [path] price: $5\n"
+	want := "SPEC: [path] price: $5\n"
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
 	}
@@ -573,7 +573,7 @@ func TestListFullRawShowsFileRefPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [path] " + path
+	want := "SPEC: [path] " + path
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want path %q", strings.Join(lines, "\n"), want)
 	}
