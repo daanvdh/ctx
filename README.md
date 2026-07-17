@@ -55,6 +55,13 @@ go install github.com/daanvdh/ctx@latest
   db_path: /tmp/my‑ctx.db
   ```
 - Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.yml` to use a different directory.
+- A default session can be configured in `settings.yml`, globally and/or per directory. When a command needs a session and `CTX_ID` is unset, the most specific `default_sessions` path containing the working directory wins, then `default_session`; `CTX_ID` always takes precedence over both:
+  ```yaml
+  default_session: main
+  default_sessions:
+    /Users/me/git/ctx: ctx-dev
+    /Users/me/git/blog: blog
+  ```
 - HTTP MCP defaults and authentication can also be configured in `settings.yml`:
   ```yaml
   mcp_http_addr: 127.0.0.1:7331

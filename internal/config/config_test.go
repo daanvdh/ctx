@@ -38,3 +38,31 @@ func TestWriteSettingsThenLoadSettingsRoundTrips(t *testing.T) {
 		t.Errorf("round-tripped settings = %#v, want %#v", got, want)
 	}
 }
+
+func TestDefaultSessionForPrefersMostSpecificPath(t *testing.T) {
+	settings := Settings{
+		DefaultSession: "global",
+		DefaultSessions: map[string]string{
+			"/home/u/git":     "git-wide",
+			"/home/u/git/ctx": "ctx-dev",
+		},
+	}
+	cases := map[string]string{
+		"/home/u/git/ctx/internal": "ctx-dev",
+		"/home/u/git/ctx":          "ctx-dev",
+		"/home/u/git/other":        "git-wide",
+		"/home/u/git/ctx-fork":     "git-wide", // not under /home/u/git/ctx: prefix must respect path boundaries
+		"/somewhere/else":          "global",
+	}
+	for cwd, want := range cases {
+		if got := DefaultSessionFor(settings, cwd); got != want {
+			t.Fatalf("DefaultSessionFor(%q) = %q, want %q", cwd, got, want)
+		}
+	}
+}
+
+func TestDefaultSessionForEmptyWithoutConfig(t *testing.T) {
+	if got := DefaultSessionFor(Settings{}, "/anywhere"); got != "" {
+		t.Fatalf("DefaultSessionFor = %q, want empty", got)
+	}
+}

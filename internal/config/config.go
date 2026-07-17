@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +22,44 @@ type Settings struct {
 	MCPPublicURL         string   `yaml:"mcp_public_url"`
 	RemoteMCPURL         string   `yaml:"remote_mcp_url"`
 	RemoteMCPToken       string   `yaml:"remote_mcp_token"`
+	// DefaultSession is the session used when CTX_ID is unset.
+	DefaultSession string `yaml:"default_session,omitempty"`
+	// DefaultSessions maps absolute directory paths to the session used when
+	// the working directory is at or below that path; the most specific
+	// matching path wins and beats DefaultSession.
+	DefaultSessions map[string]string `yaml:"default_sessions,omitempty"`
+}
+
+// DefaultSessionFor returns the configured default session for cwd: the
+// per-directory mapping with the longest matching path prefix (on path
+// boundaries), falling back to the global default_session, or "" if neither
+// is configured.
+func DefaultSessionFor(settings Settings, cwd string) string {
+	best, bestLen := settings.DefaultSession, -1
+	for dir, session := range settings.DefaultSessions {
+		clean := filepath.Clean(dir)
+		if cwd != clean && !strings.HasPrefix(cwd, clean+string(filepath.Separator)) {
+			continue
+		}
+		if len(clean) > bestLen {
+			best, bestLen = session, len(clean)
+		}
+	}
+	return best
+}
+
+// DefaultSession loads settings and returns the default session for the
+// current working directory, or "" if none is configured.
+func DefaultSession() string {
+	settings, err := LoadSettings()
+	if err != nil {
+		return ""
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return settings.DefaultSession
+	}
+	return DefaultSessionFor(settings, cwd)
 }
 
 func Dir() (string, error) {
