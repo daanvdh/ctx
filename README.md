@@ -338,6 +338,8 @@ script: pi "$CTX_TRIGGER_PROMPT"
 Review the change described in $STORY. End with APPROVED or CHANGES_REQUESTED.
 ```
 
+**Failure capture** – set `failure-entry: <KEY>` to write a short failure summary (trigger name, exit code, stderr tail) to that key in the execution session when the script fails or times out. Like `output-entry`, it's an ordinary write, so a recovery trigger can fire on it instead of the chain stalling silently.
+
 **Chaining** – a `ctx set` from inside a trigger script fires downstream triggers like any other write, so triggers can chain (build writes `STATUS=FAILED`, a second trigger fires on it). Each nesting level increments `CTX_TRIGGER_DEPTH`; past depth 5 writes stop firing triggers, so accidental loops terminate. Set `CTX_SUPPRESS_TRIGGERS=1` in a script for writes that should never fire anything.
 
 **Logging** – set `logging: true` in the frontmatter to write a JSON audit record under `trigger_log_<trigger-name>_<timestamp>` (a valid shell variable name, so `ctx export` can expose it) in the triggering session for every run. Logging is off by default; script failures are still reported on stderr.

@@ -1459,6 +1459,52 @@ func TestOutputEntrySkippedOnScriptFailure(t *testing.T) {
 	}
 }
 
+func TestFailureEntryWrittenOnScriptFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  TASK:\nexecution-session: work\nfailure-entry: TASK_ERROR\nscript: |\n  echo boom >&2\n  exit 7\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "fail.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	a.stderr = io.Discard
+	if err := a.SetValue(context.Background(), "s1", "TASK", "x"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	got := fake.values["work.TASK_ERROR"]
+	if !strings.Contains(got, "exit 7") || !strings.Contains(got, "boom") {
+		t.Fatalf("TASK_ERROR = %q, want exit code and stderr tail (values %#v)", got, fake.values)
+	}
+}
+
+func TestFailureEntryNotWrittenOnSuccess(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  TASK:\nexecution-session: work\nfailure-entry: TASK_ERROR\nscript: /bin/echo fine\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "fail.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "TASK", "x"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, ok := fake.values["work.TASK_ERROR"]; ok {
+		t.Fatalf("expected no failure entry on success, got %#v", fake.values)
+	}
+}
+
 func TestWriteTriggerLogSkippedWithoutLoggingOptIn(t *testing.T) {
 	fake := &fakeStore{}
 	a := NewWithStore(fake)

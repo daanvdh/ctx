@@ -71,6 +71,7 @@ type TriggerDefinition struct {
 	Schedule         string
 	Logging          bool
 	OutputEntry      string
+	FailureEntry     string
 	Timeout          time.Duration // zero = unbounded
 }
 
@@ -104,6 +105,7 @@ type triggerFileData struct {
 	Schedule         string                         `yaml:"schedule"`
 	Logging          bool                           `yaml:"logging"`
 	OutputEntry      string                         `yaml:"output-entry"`
+	FailureEntry     string                         `yaml:"failure-entry"`
 	Timeout          string                         `yaml:"timeout"`
 }
 
@@ -304,6 +306,7 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		Schedule:         data.Schedule,
 		Logging:          data.Logging,
 		OutputEntry:      data.OutputEntry,
+		FailureEntry:     data.FailureEntry,
 		Timeout:          timeout,
 	}, nil
 }
@@ -494,7 +497,7 @@ func matchesCronField(field string, value, max int) (bool, error) {
 // that name runtime targets (execution-session, output-entry) against the
 // triggering session's resolved values. Matcher fields stay literal.
 func renderDefinitionVars(def TriggerDefinition, vars map[string]string) (TriggerDefinition, error) {
-	for _, field := range []*string{&def.ExecutionSession, &def.OutputEntry} {
+	for _, field := range []*string{&def.ExecutionSession, &def.OutputEntry, &def.FailureEntry} {
 		if !strings.Contains(*field, "$") {
 			continue
 		}
@@ -576,6 +579,16 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		if err := a.setEntryAtDepth(ctx, executionSession, def.OutputEntry,
 			model.NewEntry(output, model.ValueTypeString), change.Depth+1); err != nil {
 			errText = fmt.Sprintf("write output-entry %s: %v", def.OutputEntry, err)
+		}
+	}
+	if def.FailureEntry != "" && runErr != nil {
+		failure := fmt.Sprintf("trigger %s failed (exit %d): %s", def.Name, exitCode, runErr)
+		if tail := tailString(strings.TrimSpace(errBuf.String()), 2000); tail != "" {
+			failure += "\n" + tail
+		}
+		if err := a.setEntryAtDepth(ctx, executionSession, def.FailureEntry,
+			model.NewEntry(failure, model.ValueTypeString), change.Depth+1); err != nil {
+			errText = fmt.Sprintf("%s; write failure-entry %s: %v", errText, def.FailureEntry, err)
 		}
 	}
 
@@ -703,6 +716,15 @@ func (a *App) writeTriggerLog(ctx context.Context, def TriggerDefinition, change
 	timestamp := now.Format("060102150405") + fmt.Sprintf("%02d", now.Nanosecond()/1e7)
 	key := fmt.Sprintf("trigger_log_%s_%s", shellSafeIdentifier(log.Trigger), timestamp)
 	return a.store.SetValue(ctx, change.SessionID, key, string(data))
+}
+
+// tailString returns the last max bytes of s (from a rune-safe boundary is
+// not needed for log tails; byte cut is fine for error context).
+func tailString(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[len(s)-max:]
 }
 
 // shellSafeIdentifier rewrites s so it only contains characters valid in a
