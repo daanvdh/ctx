@@ -313,6 +313,8 @@ Summarise recent changes for $PROJECT.
 
 When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, and sets `CTX_ID` for the invoked script. Use `execution-session: <session>` to run the script with a specific existing session instead.
 
+**Chaining** – a `ctx set` from inside a trigger script fires downstream triggers like any other write, so triggers can chain (build writes `STATUS=FAILED`, a second trigger fires on it). Each nesting level increments `CTX_TRIGGER_DEPTH`; past depth 5 writes stop firing triggers, so accidental loops terminate. Set `CTX_SUPPRESS_TRIGGERS=1` in a script for writes that should never fire anything.
+
 **Logging** – set `logging: true` in the frontmatter to write a JSON audit record under `trigger_log_<trigger-name>_<timestamp>` (a valid shell variable name, so `ctx export` can expose it) in the triggering session for every run. Logging is off by default; script failures are still reported on stderr.
 
 **Multi-variable bodies** – a body can be split into named blocks with `<!-- ctx:var NAME -->` markers. Each marker starts a new block running until the next marker (or EOF); surrounding blank lines are trimmed. Content before the first marker (or the whole body, if there are no markers) becomes `CTX_TRIGGER_PROMPT`. Every block, `$VAR`-rendered against the triggering session's values, is exported as an environment variable of the same name to the script — the script decides how and where to use each one, nothing is auto-appended. A variable defined this way takes precedence over a ctx-session value of the same name.

@@ -23,6 +23,26 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// maxTriggerDepth bounds trigger chaining: a ctx write from inside a trigger
+// script fires downstream triggers as usual, each nesting level incrementing
+// CTX_TRIGGER_DEPTH, until this limit stops runaway loops.
+const maxTriggerDepth = 5
+
+// triggerDepth returns the current trigger nesting depth from the environment.
+func triggerDepth() int {
+	n, _ := strconv.Atoi(os.Getenv("CTX_TRIGGER_DEPTH"))
+	return n
+}
+
+// triggerEnv returns the base environment for a trigger script: the nesting
+// depth incremented by one so chained writes keep firing triggers up to
+// maxTriggerDepth, and CTX_ID pointing at the execution session.
+func triggerEnv(executionSession string) []string {
+	return append(os.Environ(),
+		"CTX_TRIGGER_DEPTH="+strconv.Itoa(triggerDepth()+1),
+		"CTX_ID="+executionSession)
+}
+
 type TriggerChange struct {
 	SessionID string
 	Key       string
@@ -407,7 +427,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		})
 	}
 
-	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+executionSession)
+	env := triggerEnv(executionSession)
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}

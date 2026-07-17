@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1206,6 +1208,69 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 		return
 	}
 	t.Fatalf("expected a trigger_log key, got %#v", fake.values)
+}
+
+func TestTriggerEnvIncrementsDepth(t *testing.T) {
+	t.Setenv("CTX_TRIGGER_DEPTH", "2")
+	env := triggerEnv("s1")
+	found := false
+	for _, kv := range env {
+		if kv == "CTX_TRIGGER_DEPTH=3" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected CTX_TRIGGER_DEPTH=3 in env, got %v", env)
+	}
+}
+
+func TestSetValueSkipsTriggersAtMaxDepth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CTX_TRIGGER_DEPTH", strconv.Itoa(maxTriggerDepth))
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	outPath := filepath.Join(home, "out.txt")
+	trigger := "any-change: true\nscript: /bin/sh -c 'echo ran > " + outPath + "'\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "loop.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	a.stderr = io.Discard
+	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Fatal("expected trigger not to fire at max depth")
+	}
+}
+
+func TestSetValueFiresTriggersBelowMaxDepth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CTX_TRIGGER_DEPTH", "1")
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	outPath := filepath.Join(home, "out.txt")
+	trigger := "any-change: true\nscript: /bin/sh -c 'echo ran > " + outPath + "'\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "chain.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("expected trigger to fire below max depth: %v", err)
+	}
 }
 
 func TestWriteTriggerLogSkippedWithoutLoggingOptIn(t *testing.T) {

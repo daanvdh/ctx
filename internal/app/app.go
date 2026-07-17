@@ -121,6 +121,10 @@ func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.E
 	if os.Getenv("CTX_SUPPRESS_TRIGGERS") == "1" {
 		return nil
 	}
+	if triggerDepth() >= maxTriggerDepth {
+		fmt.Fprintf(a.stderr, "ctx: trigger depth limit (%d) reached; not firing triggers for %s\n", maxTriggerDepth, key)
+		return nil
+	}
 	if oldErr != nil {
 		oldValue = ""
 	}
@@ -469,7 +473,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+sessionID)
+	env := triggerEnv(sessionID)
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
