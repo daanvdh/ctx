@@ -69,6 +69,7 @@ type TriggerDefinition struct {
 	Schedule         string
 	Logging          bool
 	OutputEntry      string
+	Timeout          time.Duration // zero = unbounded
 }
 
 type triggerLog struct {
@@ -101,6 +102,7 @@ type triggerFileData struct {
 	Schedule         string                         `yaml:"schedule"`
 	Logging          bool                           `yaml:"logging"`
 	OutputEntry      string                         `yaml:"output-entry"`
+	Timeout          string                         `yaml:"timeout"`
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
@@ -244,6 +246,15 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires execution-session to be set", path)
 	}
 
+	var timeout time.Duration
+	if data.Timeout != "" {
+		d, err := time.ParseDuration(data.Timeout)
+		if err != nil || d <= 0 {
+			return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: invalid timeout %q (want a positive Go duration like 10m)", path, data.Timeout)
+		}
+		timeout = d
+	}
+
 	entries := make(map[string][]string, len(data.Entries))
 	for key, vals := range data.Entries {
 		values := make([]string, 0, len(vals))
@@ -267,6 +278,7 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		Schedule:         data.Schedule,
 		Logging:          data.Logging,
 		OutputEntry:      data.OutputEntry,
+		Timeout:          timeout,
 	}, nil
 }
 
@@ -438,8 +450,17 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
+	runCtx := ctx
+	if def.Timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, def.Timeout)
+		defer cancel()
+	}
 	var outBuf, errBuf bytes.Buffer
-	exitCode, runErr := runScript(ctx, def.Script, vars, triggerVars, env, &outBuf, &errBuf)
+	exitCode, runErr := runScript(runCtx, def.Script, vars, triggerVars, env, &outBuf, &errBuf)
+	if runErr != nil && runCtx.Err() == context.DeadlineExceeded {
+		runErr = fmt.Errorf("script timed out after %s", def.Timeout)
+	}
 
 	errText := ""
 	if runErr != nil {

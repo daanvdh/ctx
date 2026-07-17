@@ -486,7 +486,15 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
+	if def.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, def.Timeout)
+		defer cancel()
+	}
 	if _, err := runScript(ctx, def.Script, vars, triggerVars, env, a.stdout, a.stderr); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("script timed out after %s", def.Timeout)
+		}
 		return fmt.Errorf("script execution failed: %w", err)
 	}
 	return nil

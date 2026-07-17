@@ -1273,6 +1273,47 @@ func TestSetValueFiresTriggersBelowMaxDepth(t *testing.T) {
 	}
 }
 
+func TestParseTriggerRejectsInvalidTimeout(t *testing.T) {
+	if _, err := parseTriggerDefinition("test.md", "script: echo\ntimeout: soon\n"); err == nil {
+		t.Fatal("expected invalid timeout to fail")
+	}
+	if _, err := parseTriggerDefinition("test.md", "script: echo\ntimeout: -5s\n"); err == nil {
+		t.Fatal("expected negative timeout to fail")
+	}
+}
+
+func TestTriggerTimeoutKillsScript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "any-change: true\nlogging: true\ntimeout: 100ms\nscript: /bin/sleep 5\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "slow.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	start := time.Now()
+	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("trigger took %s, want script killed near its 100ms timeout", elapsed)
+	}
+	found := false
+	for key, value := range fake.values {
+		if strings.HasPrefix(key, "s1.trigger_log_") && strings.Contains(value, "timed out after") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected timeout recorded in trigger log, got %#v", fake.values)
+	}
+}
+
 func TestOutputEntryCapturesScriptStdout(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
