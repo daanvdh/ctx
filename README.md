@@ -84,7 +84,7 @@ go install github.com/daanvdh/ctx@latest
 | `ctx list [session] [--full] [--raw]` (alias: `ctx ls`) | `ctx list $SID`<br>`ctx list $SID --full`<br>`ctx list $SID --raw` | Print all visible keys with type tags, rendering `$VAR` placeholders by default. Strings and documents are shown as first-line previews unless `--full` shows the complete value; `--raw` skips rendering. Unlike `ctx get`, a listing never fails over one entry's unresolved placeholder — it's left unchanged instead. |
 | `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
-| `ctx execute [session] <template>` | `ctx execute $SID review` | Execute a trigger template from the trigger directory. The filename extension is optional. |
+| `ctx trigger [session] <template>` (alias: `ctx execute`) | `ctx trigger $SID review` | Fire a trigger template from the trigger directory. The filename extension is optional. |
 | `ctx tree [session_id] [-a] [--format text\|json]` | `ctx tree`<br>`ctx tree $SID`<br>`ctx tree -a` | Render the session hierarchy as an ASCII tree, showing ids and key/value pairs. Scoped to `session_id` (or `CTX_ID` if set) — its ancestors and descendants only. Use `-a`/`--all`, or omit both `session_id` and `CTX_ID`, to show the full tree of all sessions. |
 | `ctx --version` | `ctx --version` | Print the build version. |
 | `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
@@ -199,7 +199,7 @@ Available tools:
 | `ctx_tree` | Render the complete session tree as text or JSON. |
 | `ctx_render` | Render a stored template key with visible context variables. |
 | `ctx_delete` | Delete a session. Fails if it has child sessions unless `recursive` is set. |
-| `ctx_execute` | Execute a trigger template from the ctx trigger directory. |
+| `ctx_trigger` | Fire a trigger template from the ctx trigger directory. (`ctx_execute` still accepted as an alias.) |
 
 The server uses the same settings and SQLite database as the CLI, so `db_path`
 and `trigger_location` in `$HOME/.config/ctx/settings.yml` apply to both.
@@ -272,7 +272,7 @@ Analyse and comment on PR $PR_NUMBER:
 $STORY
 ```
 
-`script` is required. `trigger-session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
+`script` is required. `trigger-session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only fired manually with `ctx trigger`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
 
 **`ancestor` matching** – `ancestor: <session>` requires that `<session>` is an ancestor of the triggering session (found by walking its parent chain), based on an exact ID match. It's optional and ANDs with the other matchers; leave it unset to match any ancestor (or none).
 
@@ -352,7 +352,7 @@ Scheduled triggers are meant to stay narrowly scoped — poll something external
 If no persistent `ctx serve` process is running, skip `schedule` entirely and point OS cron directly at a schedule-less trigger instead — no `ctx`-side due-checking needed:
 
 ```
-* * * * * ctx execute <session> <template>
+* * * * * ctx trigger <session> <template>
 ```
 
 ## `ctx tree` output example

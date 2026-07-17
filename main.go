@@ -21,7 +21,8 @@ func main() {
 		"ls":      {Name: "list", Run: cmd.List},
 		"share":   {Name: "share", Run: cmd.Share},
 		"tree":    {Name: "tree", Run: cmd.Tree},
-		"execute": {Name: "execute", Run: cmd.Execute},
+		"trigger": {Name: "trigger", Run: cmd.Trigger},
+		"execute": {Name: "trigger", Run: cmd.Trigger},
 		"serve":   {Name: "serve", Run: cmd.Serve},
 		"help":    {Name: "help", Run: cmd.Help},
 	}
