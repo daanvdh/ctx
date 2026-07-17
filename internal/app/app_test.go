@@ -22,7 +22,25 @@ type fakeStore struct {
 	resolved        map[string]string
 	resolvedEntries map[string]model.Entry
 	nodes           []model.SessionNode
+	claimed         map[string]time.Time
 	err             error
+}
+
+// ClaimTriggerSchedule is a fake of store.SQLite's atomic claim, so
+// scheduler tests can exercise runDueSchedules against fakeStore instead of
+// a real SQLite file.
+func (f *fakeStore) ClaimTriggerSchedule(_ context.Context, triggerPath string, dueAt time.Time) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	if f.claimed == nil {
+		f.claimed = make(map[string]time.Time)
+	}
+	if last, ok := f.claimed[triggerPath]; ok && !last.Before(dueAt) {
+		return false, nil
+	}
+	f.claimed[triggerPath] = dueAt
+	return true, nil
 }
 
 func (f *fakeStore) CreateSession(_ context.Context, id string, parentID *string) error {
@@ -949,20 +967,51 @@ func TestParseTriggerSession(t *testing.T) {
 	}
 }
 
-func TestParseTriggerScheduleRequiresSession(t *testing.T) {
+func TestParseTriggerScheduleRequiresExecutionSession(t *testing.T) {
 	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nscript: echo\n")
 	if err == nil {
-		t.Fatal("expected schedule without session to fail")
+		t.Fatal("expected schedule without execution-session to fail")
+	}
+}
+
+func TestParseTriggerScheduleRejectsTriggerSession(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\ntrigger-session: my-session\nexecution-session: out\nscript: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule combined with trigger-session to fail")
+	}
+}
+
+func TestParseTriggerScheduleRejectsAncestor(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nancestor: root\nexecution-session: out\nscript: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule combined with ancestor to fail")
+	}
+}
+
+func TestParseTriggerScheduleRejectsEntries(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nexecution-session: out\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule combined with entries to fail")
+	}
+}
+
+func TestParseTriggerScheduleRejectsAnyChange(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nany-change: true\nexecution-session: out\nscript: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule combined with any-change to fail")
 	}
 }
 
 func TestParseTriggerSchedule(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\ntrigger-session: my-session\nscript: echo\n")
+	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: echo\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
 	if def.Schedule != "*/15 * * * *" {
 		t.Fatalf("Schedule = %q, want */15 * * * *", def.Schedule)
+	}
+	if def.ExecutionSession != "out" {
+		t.Fatalf("ExecutionSession = %q, want out", def.ExecutionSession)
 	}
 }
 
@@ -1013,35 +1062,128 @@ func TestMatchesScheduleRejectsOutOfRangeValue(t *testing.T) {
 	}
 }
 
-func TestRunScheduledTriggersFiresDueTriggerMatchingEntries(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func writeScheduleTrigger(t *testing.T, home, script string) {
+	t.Helper()
 	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nCheck $STATUS"
+	trigger := "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: " + script + "\n---\nCheck poll"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
+}
 
-	fake := &fakeStore{resolved: map[string]string{"STATUS": "ACTIVE"}}
+func TestRunDueSchedulesFiresDueTriggerOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeScheduleTrigger(t, home, `/bin/echo "$CTX_TRIGGER_PROMPT"`)
+
+	fake := &fakeStore{}
 	a := NewWithStore(fake)
 
 	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
-	if err := a.RunScheduledTriggers(context.Background(), due); err != nil {
-		t.Fatalf("RunScheduledTriggers error: %v", err)
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
 	}
 
 	foundLog := false
 	for key, value := range fake.values {
-		if strings.HasPrefix(key, "s1.trigger_log_") {
-			foundLog = strings.Contains(value, `"trigger":"poll"`) && strings.Contains(value, "Check ACTIVE")
+		if strings.HasPrefix(key, "out.trigger_log_") {
+			foundLog = strings.Contains(value, `"trigger":"poll"`) && strings.Contains(value, "Check poll")
 			break
 		}
 	}
 	if !foundLog {
 		t.Fatalf("expected trigger log in values, got %#v", fake.values)
+	}
+}
+
+func TestRunDueSchedulesSecondCallSameMinuteDoesNotRefire(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeScheduleTrigger(t, home, "/bin/echo")
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("first runDueSchedules error: %v", err)
+	}
+	if len(fake.values) == 0 {
+		t.Fatal("expected trigger to fire on first call")
+	}
+
+	fake.values = nil
+	fake.entries = nil
+	sameMinuteLater := due.Add(20 * time.Second)
+	if err := a.runDueSchedules(context.Background(), fake, sameMinuteLater); err != nil {
+		t.Fatalf("second runDueSchedules error: %v", err)
+	}
+	if len(fake.values) != 0 {
+		t.Fatalf("expected no trigger fire within the same matching minute, got %#v", fake.values)
+	}
+}
+
+func TestRunDueSchedulesRefiresOnNextMatchingMinute(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeScheduleTrigger(t, home, "/bin/echo")
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("first runDueSchedules error: %v", err)
+	}
+	if len(fake.values) == 0 {
+		t.Fatal("expected trigger to fire on first call")
+	}
+
+	fake.values = nil
+	fake.entries = nil
+	nextDue := due.Add(15 * time.Minute)
+	if err := a.runDueSchedules(context.Background(), fake, nextDue); err != nil {
+		t.Fatalf("second runDueSchedules error: %v", err)
+	}
+	if len(fake.values) == 0 {
+		t.Fatal("expected trigger to fire again on the next matching minute")
+	}
+}
+
+// fakeStoreNoClaim satisfies App's Store interface but not scheduleClaimer,
+// exercising RunScheduler's fallback for stores that don't support atomic
+// schedule claims (e.g. a remote MCP-backed store).
+type fakeStoreNoClaim struct{}
+
+func (fakeStoreNoClaim) CreateSession(context.Context, string, *string) error        { return nil }
+func (fakeStoreNoClaim) SetValue(context.Context, string, string, string) error      { return nil }
+func (fakeStoreNoClaim) SetEntry(context.Context, string, string, model.Entry) error { return nil }
+func (fakeStoreNoClaim) RemoveEntry(context.Context, string, string) error           { return nil }
+func (fakeStoreNoClaim) GetValue(context.Context, string, string) (string, error)    { return "", nil }
+func (fakeStoreNoClaim) GetEntry(context.Context, string, string) (model.Entry, error) {
+	return model.Entry{}, nil
+}
+func (fakeStoreNoClaim) Resolve(context.Context, string) (map[string]string, error) { return nil, nil }
+func (fakeStoreNoClaim) ResolveEntries(context.Context, string) (map[string]model.Entry, error) {
+	return nil, nil
+}
+func (fakeStoreNoClaim) ShareContext(context.Context, string, string) error        { return nil }
+func (fakeStoreNoClaim) SessionNodes(context.Context) ([]model.SessionNode, error) { return nil, nil }
+func (fakeStoreNoClaim) DeleteSession(context.Context, string, bool, bool, bool) error {
+	return nil
+}
+
+func TestRunSchedulerBlocksWhenStoreCannotClaim(t *testing.T) {
+	a := NewWithStore(fakeStoreNoClaim{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := a.RunScheduler(ctx)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("RunScheduler error = %v, want context.DeadlineExceeded", err)
 	}
 }
 
@@ -1066,36 +1208,20 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 	t.Fatalf("expected a trigger_log key, got %#v", fake.values)
 }
 
-func TestRunScheduledTriggersSkipsWhenNotDueOrEntriesMismatch(t *testing.T) {
+func TestRunDueSchedulesSkipsWhenNotDue(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
-	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
-		t.Fatalf("mkdir triggers: %v", err)
-	}
-	trigger := "trigger-session: s1\nschedule: \"*/15 * * * *\"\nentries:\n  STATUS:\n    - value: \"ACTIVE\"\nscript: /bin/echo\n---\nCheck $STATUS"
-	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
-		t.Fatalf("write trigger: %v", err)
-	}
+	writeScheduleTrigger(t, home, "/bin/echo")
 
 	notDue := time.Date(2026, 3, 5, 13, 31, 0, 0, time.UTC)
-	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
-
-	fake := &fakeStore{resolved: map[string]string{"STATUS": "INACTIVE"}}
+	fake := &fakeStore{}
 	a := NewWithStore(fake)
 
-	if err := a.RunScheduledTriggers(context.Background(), notDue); err != nil {
-		t.Fatalf("RunScheduledTriggers error: %v", err)
+	if err := a.runDueSchedules(context.Background(), fake, notDue); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
 	}
 	if len(fake.values) != 0 {
 		t.Fatalf("expected no trigger fire when not due, got %#v", fake.values)
-	}
-
-	if err := a.RunScheduledTriggers(context.Background(), due); err != nil {
-		t.Fatalf("RunScheduledTriggers error: %v", err)
-	}
-	if len(fake.values) != 0 {
-		t.Fatalf("expected no trigger fire when entries filter doesn't match, got %#v", fake.values)
 	}
 }
 

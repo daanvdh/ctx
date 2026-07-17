@@ -16,6 +16,7 @@ import (
 
 type serveOptions struct {
 	httpMode       bool
+	stdioMode      bool
 	addr           string
 	path           string
 	serverName     string
@@ -34,6 +35,16 @@ func Serve(ctx context.Context, args []string) error {
 	}
 
 	if opts.httpMode {
+		a, err := newApp()
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := a.RunScheduler(ctx); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "ctx: serve: scheduler: %v\n", err)
+			}
+		}()
+
 		auth := mcp.NewHTTPAuth(opts.auth)
 		mux := http.NewServeMux()
 		if auth.Enabled() {
@@ -58,7 +69,16 @@ func Serve(ctx context.Context, args []string) error {
 		return http.ListenAndServe(opts.addr, handler)
 	}
 
-	return mcp.NewServer(os.Stdin, os.Stdout).Serve(ctx)
+	if opts.stdioMode {
+		return mcp.NewServer(os.Stdin, os.Stdout).Serve(ctx)
+	}
+
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "ctx: serve: running trigger scheduler only (no MCP surface); use --http or --stdio to also serve MCP")
+	return a.RunScheduler(ctx)
 }
 
 func parseServeArgs(args []string) (*serveOptions, error) {
@@ -74,11 +94,16 @@ func parseServeArgs(args []string) (*serveOptions, error) {
 
 func parseServeArgsWithSettings(args []string, settings config.Settings) (*serveOptions, error) {
 	if helpRequested(args) {
-		fmt.Println(`Usage: ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]
+		fmt.Println(`Usage: ctx serve [--http | --stdio] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]
 
-Serve the ctx MCP server.
+Serve the ctx MCP server and/or the trigger scheduler.
 
-By default, ctx serve uses MCP stdio transport. Use --http to serve Streamable HTTP.`)
+  --http    serve MCP over Streamable HTTP; runs the trigger scheduler
+  --stdio   serve MCP over stdio; no scheduler (stdio is ephemeral, spawned
+            per session, so a ticker here would race across instances)
+  (none)    run the trigger scheduler only, no MCP surface
+
+--http and --stdio are mutually exclusive.`)
 		return nil, nil
 	}
 
@@ -90,6 +115,7 @@ By default, ctx serve uses MCP stdio transport. Use --http to serve Streamable H
 	defaultName := stringDefault(settings.MCPServerName, "ctx-mcp")
 	defaultOrigins := strings.Join(settings.MCPAllowedOrigins, ",")
 	httpMode := fs.Bool("http", false, "serve MCP over Streamable HTTP instead of stdio")
+	stdioMode := fs.Bool("stdio", false, "serve MCP over stdio (no trigger scheduler)")
 	addr := fs.String("addr", defaultAddr, "HTTP listen address")
 	path := fs.String("path", defaultPath, "HTTP MCP endpoint path")
 	serverName := fs.String("name", defaultName, "MCP server name reported to clients")
@@ -99,13 +125,17 @@ By default, ctx serve uses MCP stdio transport. Use --http to serve Streamable H
 		return nil, err
 	}
 	if fs.NArg() != 0 {
-		return nil, usage("serve", "ctx serve [--http] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]")
+		return nil, usage("serve", "ctx serve [--http | --stdio] [--addr <addr>] [--path <path>] [--name <name>] [--allowed-origins <origins>] [--debug]")
+	}
+	if *httpMode && *stdioMode {
+		return nil, usage("serve", "--http and --stdio are mutually exclusive")
 	}
 
 	resolvedPath := pathDefault(*path, "/mcp")
 	resolvedName := stringDefault(*serverName, "ctx-mcp")
 	return &serveOptions{
 		httpMode:       *httpMode,
+		stdioMode:      *stdioMode,
 		addr:           *addr,
 		path:           resolvedPath,
 		serverName:     resolvedName,

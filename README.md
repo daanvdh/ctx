@@ -29,7 +29,7 @@ Anything you can run from a shell, ctx can run deterministically and add to the 
 - **Auto-fix on failure** — A second trigger fires on `STATUS=FAILED`, greps the failing test out of `BUILD_LOG`, adds it to the prompt, and calls your harness to fix only that test. The harness starts already knowing what broke.
 - **Multi-harness handoff** — Route each phase to the tool that's best at it: a reasoning-strong model plans and writes the steps to ctx, a tool-strong harness picks up that context and implements. ctx carries the state between them, so neither redoes the other's work.
 - **Delegate tool-calling from a small model** — A local model that reasons well but handles tools poorly designs the run up front; ctx executes every tool call deterministically and leaves the model only the thinking.
-- **Scheduled watch** — A cron-style trigger (`schedule` + `ctx tick`) polls a project on an interval and starts a run when something changes, instead of an agent sitting idle in a loop.
+- **Scheduled watch** — A cron-style trigger (`schedule`, fired by `ctx serve`'s built-in scheduler) polls a project on an interval and starts a run when something changes, instead of an agent sitting idle in a loop.
 - **Write from anywhere** — CI, a git hook, or another tool writes to ctx via the CLI or MCP, and that state change fires the right downstream trigger. ctx becomes the shared state your tools coordinate through.
 
 ## Quick Install
@@ -117,6 +117,13 @@ or for content that should be read fresh each time.
 `ctx` includes an MCP server proof of concept that exposes the ctx API as MCP
 tools for clients such as Claude Desktop or OpenAI-compatible MCP hosts.
 
+`ctx serve` has three modes: `--stdio` (MCP over stdio, no scheduler —
+ephemeral, spawned per session by IDEs), `--http` (MCP over Streamable HTTP,
+scheduler always on), and no flag at all (scheduler only, no MCP surface —
+for running `ctx` purely to fire `schedule`-bearing triggers). `--http` and
+`--stdio` are mutually exclusive. See [Trigger Templates](#trigger-templates)
+below for `schedule`-bearing triggers.
+
 Build it:
 
 ```bash
@@ -130,7 +137,7 @@ Example client configuration:
   "mcpServers": {
     "ctx": {
       "command": "/absolute/path/to/ctx/bin/ctx",
-      "args": ["serve"]
+      "args": ["serve", "--stdio"]
     }
   }
 }
@@ -326,18 +333,24 @@ Coordinate planner → coder to fix the failing tests in this PR.
 
 Trigger bodies with no markers still parse the same way: the whole body becomes `CTX_TRIGGER_PROMPT`. Existing trigger files that relied on the old implicit trailing-argument behavior now need `script` to reference `"$CTX_TRIGGER_PROMPT"` explicitly, as in the examples above.
 
-**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of (or in addition to) a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` requires `trigger-session` to be set (a schedule tick has no triggering session to infer one from); `ancestor` and `entries` still apply, checked against the session's current values. Nothing runs schedules automatically — invoke `ctx tick` periodically, e.g. from a crontab entry:
+**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` is mutually exclusive with `any-change`, `trigger-session`, `ancestor`, and `entries` — a trigger is either schedule-driven or transition-driven, never both — and requires `execution-session` to be set, since a schedule-driven trigger has no triggering session to read/write vars from or log to.
+
+A running `ctx serve --http` or bare `ctx serve` (see [MCP Server POC](#mcp-server-poc)) polls every `schedule`-bearing trigger roughly every 30 seconds and fires each one at most once per matching cron minute:
 
 ```yaml
-trigger-session: root
 schedule: "*/15 * * * *"   # every 15 minutes
+execution-session: watch
 script: pi "$CTX_TRIGGER_PROMPT"
 ---
 Check for updates on $PROJECT.
 ```
 
+Scheduled triggers are meant to stay narrowly scoped — poll something external and write the result into context — with a separate, ordinary transition-based trigger reacting to that write (e.g. "a PR was created, review it").
+
+If no persistent `ctx serve` process is running, skip `schedule` entirely and point OS cron directly at a schedule-less trigger instead — no `ctx`-side due-checking needed:
+
 ```
-* * * * * ctx tick
+* * * * * ctx execute <session> <template>
 ```
 
 ## `ctx tree` output example
