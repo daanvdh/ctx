@@ -32,6 +32,10 @@ Anything you can run from a shell, ctx can run deterministically and add to the 
 - **Scheduled watch** — A cron-style trigger (`schedule`, fired by `ctx serve`'s built-in scheduler) polls a project on an interval and starts a run when something changes, instead of an agent sitting idle in a loop.
 - **Write from anywhere** — CI, a git hook, or another tool writes to ctx via the CLI or MCP, and that state change fires the right downstream trigger. ctx becomes the shared state your tools coordinate through.
 
+## Example: a configuration-only agent harness
+
+[`examples/agent-harness`](examples/agent-harness) is a complete agent loop — plan → implement → verdict → report, with failure recovery — built from nothing but six trigger files and ctx state. It runs end-to-end with stub commands (no AI required) and swaps onto a real harness with one `ctx set`.
+
 ## Quick Install
 
 ```bash
