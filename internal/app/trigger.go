@@ -267,6 +267,9 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if data.Schedule != "" && data.ExecutionSession == "" {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires execution-session to be set", path)
 	}
+	if data.Schedule != "" && strings.Contains(data.ExecutionSession, "$") {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule-driven triggers have no triggering session to resolve $VAR from; execution-session must be literal", path)
+	}
 
 	var timeout time.Duration
 	if data.Timeout != "" {
@@ -445,12 +448,41 @@ func matchesCronField(field string, value, max int) (bool, error) {
 	return false, nil
 }
 
+// renderDefinitionVars renders $VAR placeholders in the frontmatter fields
+// that name runtime targets (execution-session, output-entry) against the
+// triggering session's resolved values. Matcher fields stay literal.
+func renderDefinitionVars(def TriggerDefinition, vars map[string]string) (TriggerDefinition, error) {
+	for _, field := range []*string{&def.ExecutionSession, &def.OutputEntry} {
+		if !strings.Contains(*field, "$") {
+			continue
+		}
+		rendered, err := render.TemplateString(*field, vars)
+		if err != nil {
+			return def, fmt.Errorf("trigger %s frontmatter: %w", def.Name, err)
+		}
+		*field = rendered
+	}
+	return def, nil
+}
+
 func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change TriggerChange) error {
-	executionSession, err := a.executionSession(ctx, def, change)
+	vars, err := a.store.Resolve(ctx, change.SessionID)
 	if err != nil {
 		return err
 	}
-	vars, err := a.store.Resolve(ctx, change.SessionID)
+	def, err = renderDefinitionVars(def, vars)
+	if err != nil {
+		return a.writeTriggerLog(ctx, def, change, triggerLog{
+			Trigger:   def.Name,
+			SessionID: change.SessionID,
+			Key:       change.Key,
+			OldValue:  change.OldValue,
+			NewValue:  change.NewValue,
+			ExitCode:  -1,
+			Error:     err.Error(),
+		})
+	}
+	executionSession, err := a.executionSession(ctx, def, change)
 	if err != nil {
 		return err
 	}

@@ -313,6 +313,8 @@ Summarise recent changes for $PROJECT.
 
 When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, and sets `CTX_ID` for the invoked script. Use `execution-session: <session>` to run the script with a specific existing session instead.
 
+**Variables in frontmatter** – `execution-session` and `output-entry` may reference ctx values of the triggering session, e.g. `execution-session: $STORY_ID`, rendered when the trigger fires. Matcher fields (`trigger-session`, `ancestor`, `entries`) stay literal, and schedule-driven triggers have no triggering session, so their `execution-session` must be literal too.
+
 **Background execution** – `ctx set` from the CLI returns immediately: matching and running triggers happens in a detached `ctx fire-triggers` process (an internal command), so a slow harness never blocks the writer. Within that runner, same-`order` triggers still run in parallel and order groups sequentially, exactly as before. Set `CTX_TRIGGERS_SYNC=1` to wait for triggers in the foreground instead (useful in scripts and CI that must observe the trigger's effect before continuing).
 
 **Timeout** – set `timeout: <duration>` (Go syntax, e.g. `30s`, `10m`) to kill a script that runs too long; the run is recorded as `script timed out after <duration>`. Without it, scripts run unbounded.

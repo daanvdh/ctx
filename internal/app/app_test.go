@@ -1336,6 +1336,35 @@ func TestOutputEntryCapturesScriptStdout(t *testing.T) {
 	}
 }
 
+func TestFrontmatterRendersCtxVariables(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nexecution-session: $STORY_ID\noutput-entry: RESULT\nscript: /bin/echo captured\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "dyn.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"STORY_ID": "story-7", "STATUS": "DONE"}}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if got := fake.values["story-7.RESULT"]; got != "captured" {
+		t.Fatalf("RESULT = %q in story-7, want %q (values %#v)", got, "captured", fake.values)
+	}
+}
+
+func TestParseTriggerRejectsScheduleWithVarExecutionSession(t *testing.T) {
+	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nexecution-session: $STORY\nscript: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule trigger with $VAR execution-session to fail")
+	}
+}
+
 func TestOutputEntrySkippedOnScriptFailure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
