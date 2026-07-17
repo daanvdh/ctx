@@ -78,10 +78,45 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 			continue
 		}
 
-		change := TriggerChange{SessionID: def.ExecutionSession}
-		if err := a.runTriggers(ctx, []TriggerDefinition{def}, change); err != nil {
-			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: %v\n", def.Name, err)
+		for _, sessionID := range a.scheduleTargets(ctx, def) {
+			change := TriggerChange{SessionID: sessionID}
+			if err := a.runTriggers(ctx, []TriggerDefinition{def}, change); err != nil {
+				fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: %v\n", def.Name, err)
+			}
 		}
 	}
 	return nil
+}
+
+// scheduleTargets returns the sessions a due schedule trigger fires for.
+// Without filters it fires once, for its execution-session. With filters
+// (trigger-session, ancestor, entries) it fires once per session whose
+// current state satisfies them, so one cron trigger can serve every
+// matching session.
+func (a *App) scheduleTargets(ctx context.Context, def TriggerDefinition) []string {
+	if !def.hasMatchers() {
+		return []string{def.ExecutionSession}
+	}
+	nodes, err := a.store.SessionNodes(ctx)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: list sessions: %v\n", def.Name, err)
+		return nil
+	}
+	var targets []string
+	for _, node := range nodes {
+		vars, err := a.store.Resolve(ctx, node.ID)
+		if err != nil {
+			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: resolve %s: %v\n", def.Name, node.ID, err)
+			continue
+		}
+		ancestors, err := a.ancestorSet(ctx, node.ID)
+		if err != nil {
+			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: ancestors %s: %v\n", def.Name, node.ID, err)
+			continue
+		}
+		if def.MatchesState(node.ID, vars, ancestors) {
+			targets = append(targets, node.ID)
+		}
+	}
+	return targets
 }

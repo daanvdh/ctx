@@ -261,14 +261,15 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 	if data.AnyChange && (data.TriggerSession != "" || data.Ancestor != "" || len(data.Entries) > 0) {
 		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: any-change cannot be combined with trigger-session, ancestor, or entries", path)
 	}
-	if data.Schedule != "" && (data.AnyChange || data.TriggerSession != "" || data.Ancestor != "" || len(data.Entries) > 0) {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule cannot be combined with any-change, trigger-session, ancestor, or entries", path)
+	hasMatchers := data.TriggerSession != "" || data.Ancestor != "" || len(data.Entries) > 0
+	if data.Schedule != "" && data.AnyChange {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule cannot be combined with any-change", path)
 	}
-	if data.Schedule != "" && data.ExecutionSession == "" {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule requires execution-session to be set", path)
+	if data.Schedule != "" && !hasMatchers && data.ExecutionSession == "" {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule without filters requires execution-session to be set", path)
 	}
-	if data.Schedule != "" && strings.Contains(data.ExecutionSession, "$") {
-		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: schedule-driven triggers have no triggering session to resolve $VAR from; execution-session must be literal", path)
+	if data.Schedule != "" && !hasMatchers && strings.Contains(data.ExecutionSession, "$") {
+		return TriggerDefinition{}, fmt.Errorf("malformed trigger %s: a schedule-driven trigger without filters has no triggering session to resolve $VAR from; execution-session must be literal", path)
 	}
 
 	var timeout time.Duration
@@ -352,6 +353,9 @@ func renderTriggerVars(body string, vars map[string]string) (map[string]string, 
 // vars contains the fully resolved current values for the triggering session.
 // ancestors contains the IDs of the triggering session's ancestors (not including itself).
 func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string, ancestors map[string]bool) (bool, error) {
+	if d.Schedule != "" {
+		return false, nil // schedule-driven: fires on ticks, never on writes
+	}
 	if d.AnyChange {
 		return true, nil
 	}
@@ -395,6 +399,44 @@ func (d TriggerDefinition) Matches(change TriggerChange, vars map[string]string,
 	}
 
 	return true, nil
+}
+
+// hasMatchers reports whether any session/entry filter is set.
+func (d TriggerDefinition) hasMatchers() bool {
+	return d.TriggerSession != "" || d.Ancestor != "" || len(d.Entries) > 0
+}
+
+// MatchesState reports whether a session's current state satisfies this
+// trigger's filters, with no write involved — the schedule-tick counterpart
+// of Matches. An entries key with no values requires the key to be visible;
+// with values, the current value must equal one of them.
+func (d TriggerDefinition) MatchesState(sessionID string, vars map[string]string, ancestors map[string]bool) bool {
+	if d.TriggerSession != "" && d.TriggerSession != sessionID {
+		return false
+	}
+	if d.Ancestor != "" && !ancestors[d.Ancestor] {
+		return false
+	}
+	for key, values := range d.Entries {
+		current, ok := vars[key]
+		if !ok {
+			return false
+		}
+		if len(values) == 0 {
+			continue
+		}
+		matched := false
+		for _, v := range values {
+			if current == v {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 // matchesSchedule reports whether t falls within expr, a standard 5-field

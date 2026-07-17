@@ -355,7 +355,7 @@ Coordinate planner → coder to fix the failing tests in this PR.
 
 Trigger bodies with no markers still parse the same way: the whole body becomes `CTX_TRIGGER_PROMPT`. Existing trigger files that relied on the old implicit trailing-argument behavior now need `script` to reference `"$CTX_TRIGGER_PROMPT"` explicitly, as in the examples above.
 
-**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` is mutually exclusive with `any-change`, `trigger-session`, `ancestor`, and `entries` — a trigger is either schedule-driven or transition-driven, never both — and requires `execution-session` to be set, since a schedule-driven trigger has no triggering session to read/write vars from or log to.
+**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. A schedule-driven trigger never fires on writes (and `any-change` can't be combined with it).
 
 A running `ctx serve --http` or bare `ctx serve` (see [MCP Server POC](#mcp-server-poc)) polls every `schedule`-bearing trigger roughly every 30 seconds and fires each one at most once per matching cron minute:
 
@@ -365,6 +365,17 @@ execution-session: watch
 script: pi "$CTX_TRIGGER_PROMPT"
 ---
 Check for updates on $PROJECT.
+```
+
+`schedule` can be combined with the `trigger-session`, `ancestor`, and `entries` filters. On each matching tick, every session whose *current state* satisfies all filters becomes a triggering session, and the trigger fires once per matching session — so one cron trigger can poll every active task session. An `entries` key with no values means "the key must be visible in that session"; with values, the current value must equal one of them. Without filters, `execution-session` is required (there is no triggering session otherwise) and must be literal:
+
+```yaml
+schedule: "*/5 * * * *"
+entries:
+  STATUS:
+    - value: WATCHING
+script: check-upstream "$PROJECT" && ctx set STATUS CHANGED
+---
 ```
 
 Scheduled triggers are meant to stay narrowly scoped — poll something external and write the result into context — with a separate, ordinary transition-based trigger reacting to that write (e.g. "a PR was created, review it").

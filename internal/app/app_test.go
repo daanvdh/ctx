@@ -22,10 +22,13 @@ type fakeStore struct {
 	values          map[string]string
 	entries         map[string]model.Entry
 	resolved        map[string]string
-	resolvedEntries map[string]model.Entry
-	nodes           []model.SessionNode
-	claimed         map[string]time.Time
-	err             error
+	// resolvedBySession, when set, takes precedence over resolved and
+	// returns per-session values, for tests spanning multiple sessions.
+	resolvedBySession map[string]map[string]string
+	resolvedEntries   map[string]model.Entry
+	nodes             []model.SessionNode
+	claimed           map[string]time.Time
+	err               error
 }
 
 // ClaimTriggerSchedule is a fake of store.SQLite's atomic claim, so
@@ -100,9 +103,12 @@ func (f *fakeStore) GetEntry(_ context.Context, _, key string) (model.Entry, err
 	return model.NewEntry(f.values[key], model.ValueTypeString), nil
 }
 
-func (f *fakeStore) Resolve(context.Context, string) (map[string]string, error) {
+func (f *fakeStore) Resolve(_ context.Context, sessionID string) (map[string]string, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.resolvedBySession != nil {
+		return f.resolvedBySession[sessionID], nil
 	}
 	return f.resolved, nil
 }
@@ -976,24 +982,30 @@ func TestParseTriggerScheduleRequiresExecutionSession(t *testing.T) {
 	}
 }
 
-func TestParseTriggerScheduleRejectsTriggerSession(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\ntrigger-session: my-session\nexecution-session: out\nscript: echo\n")
-	if err == nil {
-		t.Fatal("expected schedule combined with trigger-session to fail")
+func TestParseTriggerScheduleAcceptsFilters(t *testing.T) {
+	for _, content := range []string{
+		"schedule: \"* * * * *\"\ntrigger-session: my-session\nscript: echo\n",
+		"schedule: \"* * * * *\"\nancestor: root\nscript: echo\n",
+		"schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n",
+	} {
+		if _, err := parseTriggerDefinition("test.md", content); err != nil {
+			t.Fatalf("parseTriggerDefinition(%q) error: %v", content, err)
+		}
 	}
 }
 
-func TestParseTriggerScheduleRejectsAncestor(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nancestor: root\nexecution-session: out\nscript: echo\n")
-	if err == nil {
-		t.Fatal("expected schedule combined with ancestor to fail")
+func TestScheduleTriggerNeverFiresOnWrites(t *testing.T) {
+	def, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
-}
-
-func TestParseTriggerScheduleRejectsEntries(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nexecution-session: out\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
-	if err == nil {
-		t.Fatal("expected schedule combined with entries to fail")
+	ok, err := def.Matches(TriggerChange{SessionID: "s1", Key: "STATUS", NewValue: "DONE"},
+		map[string]string{"STATUS": "DONE"}, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if ok {
+		t.Fatal("schedule-driven trigger must not match a write")
 	}
 }
 
@@ -1152,6 +1164,43 @@ func TestRunDueSchedulesRefiresOnNextMatchingMinute(t *testing.T) {
 	}
 	if len(fake.values) == 0 {
 		t.Fatal("expected trigger to fire again on the next matching minute")
+	}
+}
+
+func TestRunDueSchedulesFiresPerMatchingSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	outPath := filepath.Join(home, "fired.txt")
+	trigger := "schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"WATCHING\"\nscript: |\n  echo \"$CTX_TRIGGER_PROMPT\" >> " + outPath + "\n---\npolled $NAME"
+	if err := os.WriteFile(filepath.Join(triggerDir, "watch.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{
+		nodes: []model.SessionNode{{ID: "a"}, {ID: "b"}, {ID: "c"}},
+		resolvedBySession: map[string]map[string]string{
+			"a": {"STATUS": "WATCHING", "NAME": "task-a"},
+			"b": {"STATUS": "DONE", "NAME": "task-b"},
+			"c": {"STATUS": "WATCHING", "NAME": "task-c"},
+		},
+	}
+	a := NewWithStore(fake)
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read fired.txt: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	if !strings.Contains(got, "polled task-a") || !strings.Contains(got, "polled task-c") || strings.Contains(got, "polled task-b") {
+		t.Fatalf("fired for wrong sessions:\n%s", got)
 	}
 }
 
