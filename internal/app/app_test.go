@@ -1212,7 +1212,7 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 
 func TestTriggerEnvIncrementsDepth(t *testing.T) {
 	t.Setenv("CTX_TRIGGER_DEPTH", "2")
-	env := triggerEnv("s1")
+	env := triggerEnv(triggerDepth()+1, "s1")
 	found := false
 	for _, kv := range env {
 		if kv == "CTX_TRIGGER_DEPTH=3" {
@@ -1270,6 +1270,51 @@ func TestSetValueFiresTriggersBelowMaxDepth(t *testing.T) {
 	}
 	if _, err := os.Stat(outPath); err != nil {
 		t.Fatalf("expected trigger to fire below max depth: %v", err)
+	}
+}
+
+func TestOutputEntryCapturesScriptStdout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nexecution-session: work\noutput-entry: RESULT\nscript: /bin/echo \"all good\"\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if got := fake.values["work.RESULT"]; got != "all good" {
+		t.Fatalf("RESULT = %q, want %q (values %#v)", got, "all good", fake.values)
+	}
+}
+
+func TestOutputEntrySkippedOnScriptFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nexecution-session: work\noutput-entry: RESULT\nscript: |\n  echo partial\n  exit 3\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	a.stderr = io.Discard
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, ok := fake.values["work.RESULT"]; ok {
+		t.Fatalf("expected no output entry on failure, got %#v", fake.values)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"ctx/internal/config"
+	"ctx/internal/model"
 	"ctx/internal/render"
 	"gopkg.in/yaml.v3"
 	"mvdan.cc/sh/v3/expand"
@@ -34,12 +35,12 @@ func triggerDepth() int {
 	return n
 }
 
-// triggerEnv returns the base environment for a trigger script: the nesting
-// depth incremented by one so chained writes keep firing triggers up to
-// maxTriggerDepth, and CTX_ID pointing at the execution session.
-func triggerEnv(executionSession string) []string {
+// triggerEnv returns the base environment for a trigger script: the chain
+// nesting depth (so ctx writes from the script keep firing triggers up to
+// maxTriggerDepth), and CTX_ID pointing at the execution session.
+func triggerEnv(depth int, executionSession string) []string {
 	return append(os.Environ(),
-		"CTX_TRIGGER_DEPTH="+strconv.Itoa(triggerDepth()+1),
+		"CTX_TRIGGER_DEPTH="+strconv.Itoa(depth),
 		"CTX_ID="+executionSession)
 }
 
@@ -48,6 +49,9 @@ type TriggerChange struct {
 	Key       string
 	OldValue  string
 	NewValue  string
+	// Depth is the trigger chain nesting level of the write that caused
+	// this change; writes made by a fired trigger carry Depth+1.
+	Depth int
 }
 
 // TriggerDefinition holds a parsed trigger file.
@@ -64,6 +68,7 @@ type TriggerDefinition struct {
 	PromptTemplate   string
 	Schedule         string
 	Logging          bool
+	OutputEntry      string
 }
 
 type triggerLog struct {
@@ -95,6 +100,7 @@ type triggerFileData struct {
 	Entries          map[string][]triggerEntryValue `yaml:"entries"`
 	Schedule         string                         `yaml:"schedule"`
 	Logging          bool                           `yaml:"logging"`
+	OutputEntry      string                         `yaml:"output-entry"`
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
@@ -260,6 +266,7 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		PromptTemplate:   promptTemplate,
 		Schedule:         data.Schedule,
 		Logging:          data.Logging,
+		OutputEntry:      data.OutputEntry,
 	}, nil
 }
 
@@ -427,7 +434,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		})
 	}
 
-	env := triggerEnv(executionSession)
+	env := triggerEnv(change.Depth+1, executionSession)
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
@@ -437,6 +444,14 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	errText := ""
 	if runErr != nil {
 		errText = runErr.Error()
+	}
+
+	if def.OutputEntry != "" && runErr == nil {
+		output := strings.TrimSpace(outBuf.String())
+		if err := a.setEntryAtDepth(ctx, executionSession, def.OutputEntry,
+			model.NewEntry(output, model.ValueTypeString), change.Depth+1); err != nil {
+			errText = fmt.Sprintf("write output-entry %s: %v", def.OutputEntry, err)
+		}
 	}
 
 	return a.writeTriggerLog(ctx, def, change, triggerLog{

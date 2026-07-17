@@ -106,6 +106,14 @@ func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error 
 }
 
 func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
+	return a.setEntryAtDepth(ctx, sessionID, key, entry, triggerDepth())
+}
+
+// setEntryAtDepth stores an entry and fires matching triggers at the given
+// trigger chain depth. Depth is threaded explicitly so in-process chained
+// writes (e.g. output-entry) count against maxTriggerDepth like writes made
+// by spawned ctx processes do via CTX_TRIGGER_DEPTH.
+func (a *App) setEntryAtDepth(ctx context.Context, sessionID, key string, entry model.Entry, depth int) error {
 	entry = model.NewEntry(entry.Value, entry.ValueType)
 	entry, err := prepareEntry(entry)
 	if err != nil {
@@ -121,7 +129,7 @@ func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.E
 	if os.Getenv("CTX_SUPPRESS_TRIGGERS") == "1" {
 		return nil
 	}
-	if triggerDepth() >= maxTriggerDepth {
+	if depth >= maxTriggerDepth {
 		fmt.Fprintf(a.stderr, "ctx: trigger depth limit (%d) reached; not firing triggers for %s\n", maxTriggerDepth, key)
 		return nil
 	}
@@ -133,6 +141,7 @@ func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.E
 		Key:       key,
 		OldValue:  oldValue,
 		NewValue:  entry.Value,
+		Depth:     depth,
 	})
 }
 
@@ -473,7 +482,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	env := triggerEnv(sessionID)
+	env := triggerEnv(triggerDepth()+1, sessionID)
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
