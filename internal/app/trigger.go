@@ -512,6 +512,13 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	if err != nil {
 		return err
 	}
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	// Built-in: the session that fired this trigger, so frontmatter like
+	// "execution-session: $CTX_TRIGGER_SESSION" and prompts can name it
+	// without a self-referencing ctx entry.
+	vars["CTX_TRIGGER_SESSION"] = change.SessionID
 	def, err = renderDefinitionVars(def, vars)
 	if err != nil {
 		return a.writeTriggerLog(ctx, def, change, triggerLog{
@@ -543,6 +550,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	}
 
 	env := triggerEnv(change.Depth+1, executionSession)
+	env = append(env, "CTX_TRIGGER_SESSION="+change.SessionID)
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
