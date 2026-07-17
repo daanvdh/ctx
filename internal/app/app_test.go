@@ -1068,7 +1068,7 @@ func writeScheduleTrigger(t *testing.T, home, script string) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: " + script + "\n---\nCheck poll"
+	trigger := "schedule: \"*/15 * * * *\"\nexecution-session: out\nlogging: true\nscript: " + script + "\n---\nCheck poll"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1191,7 +1191,7 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 	fake := &fakeStore{}
 	a := NewWithStore(fake)
 
-	err := a.writeTriggerLog(context.Background(), TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger.1"})
+	err := a.writeTriggerLog(context.Background(), TriggerDefinition{Logging: true}, TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger.1"})
 	if err != nil {
 		t.Fatalf("writeTriggerLog error: %v", err)
 	}
@@ -1206,6 +1206,19 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 		return
 	}
 	t.Fatalf("expected a trigger_log key, got %#v", fake.values)
+}
+
+func TestWriteTriggerLogSkippedWithoutLoggingOptIn(t *testing.T) {
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	err := a.writeTriggerLog(context.Background(), TriggerDefinition{}, TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger"})
+	if err != nil {
+		t.Fatalf("writeTriggerLog error: %v", err)
+	}
+	if len(fake.values) != 0 {
+		t.Fatalf("expected no log entry without logging: true, got %#v", fake.values)
+	}
 }
 
 func TestRunDueSchedulesSkipsWhenNotDue(t *testing.T) {
@@ -1243,7 +1256,7 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nStory $STORY"
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nlogging: true\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nStory $STORY"
 	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}

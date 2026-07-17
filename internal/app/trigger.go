@@ -43,6 +43,7 @@ type TriggerDefinition struct {
 	Script           string
 	PromptTemplate   string
 	Schedule         string
+	Logging          bool
 }
 
 type triggerLog struct {
@@ -73,6 +74,7 @@ type triggerFileData struct {
 	ExecutionSession string                         `yaml:"execution-session"`
 	Entries          map[string][]triggerEntryValue `yaml:"entries"`
 	Schedule         string                         `yaml:"schedule"`
+	Logging          bool                           `yaml:"logging"`
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
@@ -237,6 +239,7 @@ func parseTriggerDefinition(path, content string) (TriggerDefinition, error) {
 		Script:           data.Script,
 		PromptTemplate:   promptTemplate,
 		Schedule:         data.Schedule,
+		Logging:          data.Logging,
 	}, nil
 }
 
@@ -392,7 +395,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 	}
 	triggerVars, err := renderTriggerVars(def.PromptTemplate, vars)
 	if err != nil {
-		return a.writeTriggerLog(ctx, change, triggerLog{
+		return a.writeTriggerLog(ctx, def, change, triggerLog{
 			Trigger:          def.Name,
 			SessionID:        change.SessionID,
 			Key:              change.Key,
@@ -416,7 +419,7 @@ func (a *App) executeTrigger(ctx context.Context, def TriggerDefinition, change 
 		errText = runErr.Error()
 	}
 
-	return a.writeTriggerLog(ctx, change, triggerLog{
+	return a.writeTriggerLog(ctx, def, change, triggerLog{
 		Trigger:          def.Name,
 		SessionID:        change.SessionID,
 		Key:              change.Key,
@@ -521,7 +524,17 @@ func (a *App) executionSession(ctx context.Context, def TriggerDefinition, chang
 	return id, nil
 }
 
-func (a *App) writeTriggerLog(ctx context.Context, change TriggerChange, log triggerLog) error {
+// writeTriggerLog records a trigger run as a trigger_log_* entry in the
+// triggering session, but only when the trigger opts in with "logging: true".
+// With logging off, failures are still reported on stderr so they don't
+// vanish silently.
+func (a *App) writeTriggerLog(ctx context.Context, def TriggerDefinition, change TriggerChange, log triggerLog) error {
+	if !def.Logging {
+		if log.Error != "" {
+			fmt.Fprintf(a.stderr, "ctx: trigger %s: %s\n", log.Trigger, log.Error)
+		}
+		return nil
+	}
 	data, err := json.Marshal(log)
 	if err != nil {
 		return fmt.Errorf("encode trigger log: %w", err)
