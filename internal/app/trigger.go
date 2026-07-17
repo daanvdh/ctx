@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"ctx/internal/config"
@@ -103,6 +105,26 @@ type triggerFileData struct {
 	Logging          bool                           `yaml:"logging"`
 	OutputEntry      string                         `yaml:"output-entry"`
 	Timeout          string                         `yaml:"timeout"`
+}
+
+// spawnTriggerRunner starts a detached ctx process that matches and runs
+// triggers for change, so the writing command returns without waiting.
+// The child is its own session leader and survives the parent exiting.
+func spawnTriggerRunner(change TriggerChange) error {
+	data, err := json.Marshal(change)
+	if err != nil {
+		return fmt.Errorf("encode trigger change: %w", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, "fire-triggers", string(data))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start background trigger runner: %w", err)
+	}
+	return cmd.Process.Release()
 }
 
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {

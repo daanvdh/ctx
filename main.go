@@ -12,19 +12,20 @@ var version = "dev"
 
 func main() {
 	commands := map[string]cmd.Command{
-		"session": {Name: "session", Run: cmd.Session},
-		"set":     {Name: "set", Run: cmd.Set},
-		"rm":      {Name: "rm", Run: cmd.Rm},
-		"get":     {Name: "get", Run: cmd.Get},
-		"export":  {Name: "export", Run: cmd.Export},
-		"list":    {Name: "list", Run: cmd.List},
-		"ls":      {Name: "list", Run: cmd.List},
-		"share":   {Name: "share", Run: cmd.Share},
-		"tree":    {Name: "tree", Run: cmd.Tree},
-		"trigger": {Name: "trigger", Run: cmd.Trigger},
-		"execute": {Name: "trigger", Run: cmd.Trigger},
-		"serve":   {Name: "serve", Run: cmd.Serve},
-		"help":    {Name: "help", Run: cmd.Help},
+		"session":       {Name: "session", Run: cmd.Session},
+		"set":           {Name: "set", Run: cmd.Set},
+		"rm":            {Name: "rm", Run: cmd.Rm},
+		"get":           {Name: "get", Run: cmd.Get},
+		"export":        {Name: "export", Run: cmd.Export},
+		"list":          {Name: "list", Run: cmd.List},
+		"ls":            {Name: "list", Run: cmd.List},
+		"share":         {Name: "share", Run: cmd.Share},
+		"tree":          {Name: "tree", Run: cmd.Tree},
+		"trigger":       {Name: "trigger", Run: cmd.Trigger},
+		"execute":       {Name: "trigger", Run: cmd.Trigger},
+		"serve":         {Name: "serve", Run: cmd.Serve},
+		"fire-triggers": {Name: "fire-triggers", Run: cmd.FireTriggers},
+		"help":          {Name: "help", Run: cmd.Help},
 	}
 
 	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {

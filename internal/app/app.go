@@ -43,7 +43,15 @@ type App struct {
 	store  Store
 	stdout io.Writer
 	stderr io.Writer
+	// backgroundTriggers makes writes fire matching triggers in a detached
+	// ctx process instead of blocking the caller. Enabled by the CLI set
+	// path; stays off for tests, the MCP server, and the scheduler.
+	backgroundTriggers bool
 }
+
+// EnableBackgroundTriggers makes this App fire triggers in a detached
+// background process so writes return immediately.
+func (a *App) EnableBackgroundTriggers() { a.backgroundTriggers = true }
 
 func New() (*App, error) {
 	settings, err := config.LoadSettings()
@@ -136,13 +144,17 @@ func (a *App) setEntryAtDepth(ctx context.Context, sessionID, key string, entry 
 	if oldErr != nil {
 		oldValue = ""
 	}
-	return a.ExecuteMatchingTriggers(ctx, TriggerChange{
+	change := TriggerChange{
 		SessionID: sessionID,
 		Key:       key,
 		OldValue:  oldValue,
 		NewValue:  entry.Value,
 		Depth:     depth,
-	})
+	}
+	if a.backgroundTriggers {
+		return spawnTriggerRunner(change)
+	}
+	return a.ExecuteMatchingTriggers(ctx, change)
 }
 
 func (a *App) RemoveEntry(ctx context.Context, sessionID, key string) error {
