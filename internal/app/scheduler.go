@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"ctx/internal/trigger"
 )
 
 const schedulerInterval = 30 * time.Second
@@ -50,7 +52,7 @@ func (a *App) RunScheduler(ctx context.Context) error {
 // briefly delaying the next due trigger in the same tick is an acceptable
 // trade for keeping this straightforward to test and reason about.
 func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now time.Time) error {
-	defs, err := loadTriggerDefinitions()
+	defs, err := trigger.LoadAll()
 	if err != nil {
 		return err
 	}
@@ -60,7 +62,7 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 		if def.Schedule == "" {
 			continue
 		}
-		due, err := matchesSchedule(def.Schedule, now)
+		due, err := trigger.MatchesSchedule(def.Schedule, now)
 		if err != nil {
 			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: %v\n", def.Name, err)
 			continue
@@ -94,7 +96,7 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 // current state satisfies them, so one cron trigger can serve every
 // matching session.
 func (a *App) scheduleTargets(ctx context.Context, def TriggerDefinition) []string {
-	if !def.hasMatchers() {
+	if !def.HasMatchers() {
 		return []string{def.ExecutionSession}
 	}
 	nodes, err := a.store.SessionNodes(ctx)

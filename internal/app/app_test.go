@@ -14,6 +14,7 @@ import (
 
 	"ctx/internal/model"
 	"ctx/internal/session"
+	"ctx/internal/trigger"
 )
 
 type fakeStore struct {
@@ -850,7 +851,7 @@ func TestTriggerDefinitionAncestorCombinesWithEntries(t *testing.T) {
 }
 
 func TestParseTriggerAncestor(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\nancestor: root\n")
+	def, err := trigger.Parse("test.md", "script: echo\nancestor: root\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -860,7 +861,7 @@ func TestParseTriggerAncestor(t *testing.T) {
 }
 
 func TestParseTriggerRejectsAnyChangeWithAncestor(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change: true\nancestor: root\nscript: echo\n---\nhello")
+	_, err := trigger.Parse("test.md", "any-change: true\nancestor: root\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected any-change with ancestor to fail")
 	}
@@ -889,21 +890,21 @@ func TestAncestorSetWalksParentChain(t *testing.T) {
 func strPtr(s string) *string { return &s }
 
 func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change: true\nentries:\n  STATUS:\nscript: echo\n---\nhello")
+	_, err := trigger.Parse("test.md", "any-change: true\nentries:\n  STATUS:\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected any-change with entries to fail")
 	}
 }
 
 func TestParseTriggerRequiresIntegerOrder(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "order: first\nscript: echo\n---\nhello")
+	_, err := trigger.Parse("test.md", "order: first\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected non-integer order to fail")
 	}
 }
 
 func TestTriggerOrderDefaultsToZero(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\n---\nhello")
+	def, err := trigger.Parse("test.md", "script: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -913,7 +914,7 @@ func TestTriggerOrderDefaultsToZero(t *testing.T) {
 }
 
 func TestParseTriggerExecutionSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "execution-session: worker\nscript: echo\n---\nhello")
+	def, err := trigger.Parse("test.md", "execution-session: worker\nscript: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -923,7 +924,7 @@ func TestParseTriggerExecutionSession(t *testing.T) {
 }
 
 func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:")
+	def, err := trigger.Parse("test.md", "script: echo\nentries:\n  STATUS:")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -933,7 +934,7 @@ func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
 }
 
 func TestParseTriggerVarsNoMarkersAssignsWholeBodyToTriggerPrompt(t *testing.T) {
-	got := parseTriggerVars("\n\nhello $NAME\n\n")
+	got := trigger.ParseVars("\n\nhello $NAME\n\n")
 	want := map[string]string{"CTX_TRIGGER_PROMPT": "hello $NAME"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseTriggerVars = %#v, want %#v", got, want)
@@ -942,7 +943,7 @@ func TestParseTriggerVarsNoMarkersAssignsWholeBodyToTriggerPrompt(t *testing.T) 
 
 func TestParseTriggerVarsSplitsOnMarkers(t *testing.T) {
 	body := "intro text\n<!-- ctx:var CTX_AGENTS -->\n## planner\ndo stuff\n\n<!-- ctx:var CTX_PROMPT -->\nfix the bug\n"
-	got := parseTriggerVars(body)
+	got := trigger.ParseVars(body)
 	want := map[string]string{
 		"CTX_TRIGGER_PROMPT": "intro text",
 		"CTX_AGENTS":         "## planner\ndo stuff",
@@ -955,7 +956,7 @@ func TestParseTriggerVarsSplitsOnMarkers(t *testing.T) {
 
 func TestParseTriggerVarsEmptyBeforeFirstMarker(t *testing.T) {
 	body := "<!-- ctx:var CTX_PROMPT -->\nfix the bug\n"
-	got := parseTriggerVars(body)
+	got := trigger.ParseVars(body)
 	if got["CTX_TRIGGER_PROMPT"] != "" {
 		t.Fatalf("CTX_TRIGGER_PROMPT = %q, want empty", got["CTX_TRIGGER_PROMPT"])
 	}
@@ -965,7 +966,7 @@ func TestParseTriggerVarsEmptyBeforeFirstMarker(t *testing.T) {
 }
 
 func TestParseTriggerEntriesWildcard(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:\n  NOTE:\n")
+	def, err := trigger.Parse("test.md", "script: echo\nentries:\n  STATUS:\n  NOTE:\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -979,7 +980,7 @@ func TestParseTriggerEntriesWildcard(t *testing.T) {
 
 func TestParseTriggerEntriesWithValues(t *testing.T) {
 	content := "script: echo\nentries:\n  STATUS:\n    - value: \"DONE\"\n    - value: \"CANCELLED\"\n"
-	def, err := parseTriggerDefinition("test.md", content)
+	def, err := trigger.Parse("test.md", content)
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -989,7 +990,7 @@ func TestParseTriggerEntriesWithValues(t *testing.T) {
 }
 
 func TestParseTriggerSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\ntrigger-session: my-session\n")
+	def, err := trigger.Parse("test.md", "script: echo\ntrigger-session: my-session\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -999,7 +1000,7 @@ func TestParseTriggerSession(t *testing.T) {
 }
 
 func TestParseTriggerScheduleRequiresExecutionSession(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nscript: echo\n")
+	_, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nscript: echo\n")
 	if err == nil {
 		t.Fatal("expected schedule without execution-session to fail")
 	}
@@ -1011,14 +1012,14 @@ func TestParseTriggerScheduleAcceptsFilters(t *testing.T) {
 		"schedule: \"* * * * *\"\nancestor: root\nscript: echo\n",
 		"schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n",
 	} {
-		if _, err := parseTriggerDefinition("test.md", content); err != nil {
-			t.Fatalf("parseTriggerDefinition(%q) error: %v", content, err)
+		if _, err := trigger.Parse("test.md", content); err != nil {
+			t.Fatalf("trigger.Parse(%q) error: %v", content, err)
 		}
 	}
 }
 
 func TestScheduleTriggerNeverFiresOnWrites(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
+	def, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -1033,14 +1034,14 @@ func TestScheduleTriggerNeverFiresOnWrites(t *testing.T) {
 }
 
 func TestParseTriggerScheduleRejectsAnyChange(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nany-change: true\nexecution-session: out\nscript: echo\n")
+	_, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nany-change: true\nexecution-session: out\nscript: echo\n")
 	if err == nil {
 		t.Fatal("expected schedule combined with any-change to fail")
 	}
 }
 
 func TestParseTriggerSchedule(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: echo\n")
+	def, err := trigger.Parse("test.md", "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: echo\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -1053,7 +1054,7 @@ func TestParseTriggerSchedule(t *testing.T) {
 }
 
 func TestMatchesScheduleWildcardAlwaysMatches(t *testing.T) {
-	ok, err := matchesSchedule("* * * * *", time.Date(2026, 3, 5, 13, 37, 0, 0, time.UTC))
+	ok, err := trigger.MatchesSchedule("* * * * *", time.Date(2026, 3, 5, 13, 37, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("matchesSchedule error: %v", err)
 	}
@@ -1066,35 +1067,35 @@ func TestMatchesScheduleStepMatchesInterval(t *testing.T) {
 	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
 	notDue := time.Date(2026, 3, 5, 13, 31, 0, 0, time.UTC)
 
-	ok, err := matchesSchedule("*/15 * * * *", due)
+	ok, err := trigger.MatchesSchedule("*/15 * * * *", due)
 	if err != nil || !ok {
-		t.Fatalf("matchesSchedule(due) = %v, %v, want true, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(due) = %v, %v, want true, nil", ok, err)
 	}
-	ok, err = matchesSchedule("*/15 * * * *", notDue)
+	ok, err = trigger.MatchesSchedule("*/15 * * * *", notDue)
 	if err != nil || ok {
-		t.Fatalf("matchesSchedule(notDue) = %v, %v, want false, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(notDue) = %v, %v, want false, nil", ok, err)
 	}
 }
 
 func TestMatchesScheduleExactValueMatchesOnlyThatMoment(t *testing.T) {
-	ok, err := matchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 30, 0, 0, time.UTC))
+	ok, err := trigger.MatchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 30, 0, 0, time.UTC))
 	if err != nil || !ok {
-		t.Fatalf("matchesSchedule(09:30) = %v, %v, want true, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(09:30) = %v, %v, want true, nil", ok, err)
 	}
-	ok, err = matchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 31, 0, 0, time.UTC))
+	ok, err = trigger.MatchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 31, 0, 0, time.UTC))
 	if err != nil || ok {
-		t.Fatalf("matchesSchedule(09:31) = %v, %v, want false, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(09:31) = %v, %v, want false, nil", ok, err)
 	}
 }
 
 func TestMatchesScheduleRejectsWrongFieldCount(t *testing.T) {
-	if _, err := matchesSchedule("* * * *", time.Now()); err == nil {
+	if _, err := trigger.MatchesSchedule("* * * *", time.Now()); err == nil {
 		t.Fatal("expected 4-field schedule to fail")
 	}
 }
 
 func TestMatchesScheduleRejectsOutOfRangeValue(t *testing.T) {
-	if _, err := matchesSchedule("99 * * * *", time.Now()); err == nil {
+	if _, err := trigger.MatchesSchedule("99 * * * *", time.Now()); err == nil {
 		t.Fatal("expected out-of-range minute to fail")
 	}
 }
@@ -1361,10 +1362,10 @@ func TestSetValueFiresTriggersBelowMaxDepth(t *testing.T) {
 }
 
 func TestParseTriggerRejectsInvalidTimeout(t *testing.T) {
-	if _, err := parseTriggerDefinition("test.md", "script: echo\ntimeout: soon\n"); err == nil {
+	if _, err := trigger.Parse("test.md", "script: echo\ntimeout: soon\n"); err == nil {
 		t.Fatal("expected invalid timeout to fail")
 	}
-	if _, err := parseTriggerDefinition("test.md", "script: echo\ntimeout: -5s\n"); err == nil {
+	if _, err := trigger.Parse("test.md", "script: echo\ntimeout: -5s\n"); err == nil {
 		t.Fatal("expected negative timeout to fail")
 	}
 }
@@ -1468,7 +1469,7 @@ func TestFrontmatterCtxTriggerSessionBuiltin(t *testing.T) {
 }
 
 func TestParseTriggerRejectsScheduleWithVarExecutionSession(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nexecution-session: $STORY\nscript: echo\n")
+	_, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nexecution-session: $STORY\nscript: echo\n")
 	if err == nil {
 		t.Fatal("expected schedule trigger with $VAR execution-session to fail")
 	}
@@ -1575,7 +1576,7 @@ func TestRunDueSchedulesSkipsWhenNotDue(t *testing.T) {
 
 func TestParseTriggerMultilineScript(t *testing.T) {
 	content := "script: |\n  git pull\n  git status\n"
-	def, err := parseTriggerDefinition("test.md", content)
+	def, err := trigger.Parse("test.md", content)
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}

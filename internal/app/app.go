@@ -21,6 +21,7 @@ import (
 	"ctx/internal/session"
 	"ctx/internal/store"
 	"ctx/internal/textutil"
+	"ctx/internal/trigger"
 )
 
 const (
@@ -491,7 +492,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return fmt.Errorf("failed to read template %s: %w", templatePath, err)
 	}
 
-	def, err := parseTriggerDefinition(templatePath, string(data))
+	def, err := trigger.Parse(templatePath, string(data))
 	if err != nil {
 		return err
 	}
@@ -501,7 +502,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	triggerVars, err := renderTriggerVars(def.PromptTemplate, vars)
+	triggerVars, err := trigger.RenderVars(def.PromptTemplate, vars)
 	if err != nil {
 		return err
 	}
