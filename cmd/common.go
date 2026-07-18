@@ -3,18 +3,12 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 
 	"ctx/internal/app"
 	"ctx/internal/config"
 )
-
-type Command struct {
-	Name string
-	Run  func(context.Context, []string) error
-}
 
 func newApp() (*app.App, error) {
 	return app.New()
