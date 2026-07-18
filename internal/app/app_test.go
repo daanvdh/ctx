@@ -1313,7 +1313,7 @@ func TestSetValueSkipsTriggersAtMaxDepth(t *testing.T) {
 
 	fake := &fakeStore{}
 	a := NewWithStore(fake)
-	a.stderr = io.Discard
+	a.setStderr(io.Discard)
 	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
 		t.Fatalf("SetValue error: %v", err)
 	}
@@ -1489,7 +1489,7 @@ func TestOutputEntrySkippedOnScriptFailure(t *testing.T) {
 
 	fake := &fakeStore{}
 	a := NewWithStore(fake)
-	a.stderr = io.Discard
+	a.setStderr(io.Discard)
 	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
 		t.Fatalf("SetValue error: %v", err)
 	}
@@ -1512,7 +1512,7 @@ func TestFailureEntryWrittenOnScriptFailure(t *testing.T) {
 
 	fake := &fakeStore{}
 	a := NewWithStore(fake)
-	a.stderr = io.Discard
+	a.setStderr(io.Discard)
 	if err := a.SetValue(context.Background(), "s1", "TASK", "x"); err != nil {
 		t.Fatalf("SetValue error: %v", err)
 	}

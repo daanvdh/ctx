@@ -369,7 +369,7 @@ func (a *App) executionSession(ctx context.Context, def TriggerDefinition, chang
 func (a *App) writeTriggerLog(ctx context.Context, def TriggerDefinition, change TriggerChange, log triggerLog) error {
 	if !def.Logging {
 		if log.Error != "" {
-			fmt.Fprintf(a.stderr, "ctx: trigger %s: %s\n", log.Trigger, log.Error)
+			a.logger.Error("trigger failed", "trigger", log.Trigger, "error", log.Error)
 		}
 		return nil
 	}

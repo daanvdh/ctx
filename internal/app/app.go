@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,10 +53,18 @@ type App struct {
 	store  Store
 	stdout io.Writer
 	stderr io.Writer
+	logger *slog.Logger
 	// backgroundTriggers makes writes fire matching triggers in a detached
 	// ctx process instead of blocking the caller. Enabled by the CLI set
 	// path; stays off for tests, the MCP server, and the scheduler.
 	backgroundTriggers bool
+}
+
+// setStderr redirects both trigger-script stderr passthrough and diagnostic
+// logging to w. Tests use it to capture or silence output.
+func (a *App) setStderr(w io.Writer) {
+	a.stderr = w
+	a.logger = NewLogger(w)
 }
 
 // EnableBackgroundTriggers makes this App fire triggers in a detached
@@ -87,6 +96,7 @@ func NewWithStore(s Store) *App {
 		store:  s,
 		stdout: os.Stdout,
 		stderr: os.Stderr,
+		logger: NewLogger(os.Stderr),
 	}
 }
 
@@ -151,7 +161,7 @@ func (a *App) setEntryAtDepth(ctx context.Context, sessionID, key string, entry 
 		return nil
 	}
 	if limit := maxTriggerDepth(); depth >= limit {
-		fmt.Fprintf(a.stderr, "ctx: trigger depth limit (%d) reached; not firing triggers for %s\n", limit, key)
+		a.logger.Warn("trigger depth limit reached; not firing triggers", "limit", limit, "key", key)
 		return nil
 	}
 	if oldErr != nil {

@@ -175,7 +175,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown webhook source", http.StatusNotFound)
 			return
 		}
-		fmt.Fprintf(h.app.stderr, "ctx: webhook %s: %v\n", source, err)
+		h.app.logger.Error("webhook adapter error", "source", source, "error", err)
 		http.Error(w, "webhook adapter error", http.StatusInternalServerError)
 		return
 	}
@@ -186,7 +186,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := adapter.Verify.check(r, body); err != nil {
-		fmt.Fprintf(h.app.stderr, "ctx: webhook %s: rejected: %v\n", source, err)
+		h.app.logger.Warn("webhook rejected", "source", source, "error", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -230,7 +230,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			delete(h.seen, dedupeKey)
 			h.mu.Unlock()
 		}
-		fmt.Fprintf(h.app.stderr, "ctx: webhook %s: %v\n", source, err)
+		h.app.logger.Error("webhook store failed", "source", source, "error", err)
 		http.Error(w, "failed to store event", http.StatusInternalServerError)
 		return
 	}
@@ -276,7 +276,7 @@ func (h *webhookHandler) store(ctx context.Context, adapter webhookAdapter, sour
 	// sender's delivery timeout.
 	go func() {
 		if err := a.ExecuteMatchingTriggers(context.Background(), change); err != nil {
-			fmt.Fprintf(a.stderr, "ctx: webhook %s: triggers: %v\n", source, err)
+			a.logger.Error("webhook triggers failed", "source", source, "error", err)
 		}
 	}()
 	return nil
