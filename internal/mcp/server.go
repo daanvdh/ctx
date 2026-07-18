@@ -1,3 +1,5 @@
+// Package mcp exposes ctx as an MCP server over Streamable HTTP or stdio,
+// including the tools/call surface RemoteStore uses as a backend.
 package mcp
 
 import (
@@ -642,7 +644,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (result a
 			return toolError(err), nil
 		}
 		out = ok()
-	case "ctx_execute":
+	case "ctx_trigger", "ctx_execute": // ctx_execute kept as a compat alias
 		err := a.Execute(ctx, requiredString(args, "session_id"), requiredString(args, "template"))
 		if err != nil {
 			return toolError(err), nil

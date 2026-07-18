@@ -22,6 +22,10 @@ type RemoteStore struct {
 	client *http.Client
 }
 
+var _ Store = (*RemoteStore)(nil)
+
+// NewRemote returns a Store that proxies every operation to the ctx MCP
+// server at url, authenticating with token when it is non-empty.
 func NewRemote(url, token string) *RemoteStore {
 	return &RemoteStore{url: url, token: token, client: &http.Client{Timeout: 30 * time.Second}}
 }

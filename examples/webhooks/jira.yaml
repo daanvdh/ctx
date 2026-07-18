@@ -1,0 +1,13 @@
+# Jira webhook adapter. Copy to ~/.config/ctx/webhooks/jira.yaml and
+# export JIRA_WEBHOOK_TOKEN, then serve with: ctx serve --http
+#
+# Register (no app required): Project Settings > Automation > create a
+# rule with the wanted trigger (issue created, comment added, ...) and the
+# action "Send web request" to https://<host>/webhooks/jira, with header
+# Authorization: Bearer <JIRA_WEBHOOK_TOKEN> and the issue data as JSON
+# body. Automation rules don't expire, unlike REST API webhooks
+# (/rest/api/3/webhook), which need an OAuth app and 30-day renewal.
+verify: { type: bearer, secret_env: JIRA_WEBHOOK_TOKEN }
+event_type: { field: webhookEvent }
+delivery_id: { field: timestamp }
+fields: { repo: issue.fields.project.key, ref_id: issue.key }

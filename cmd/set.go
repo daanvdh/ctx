@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"ctx/internal/model"
 )
@@ -24,6 +25,9 @@ Set a key in a session. --path stores a file_ref pointing at <path>.`)
 	a, err := newApp()
 	if err != nil {
 		return err
+	}
+	if os.Getenv("CTX_TRIGGERS_SYNC") != "1" {
+		a.EnableBackgroundTriggers()
 	}
 	if parsed.valueType == model.ValueTypeString {
 		return a.SetValue(ctx, parsed.sessionID, parsed.key, parsed.value)

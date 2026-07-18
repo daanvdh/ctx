@@ -5,48 +5,80 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"ctx/cmd"
 )
 
 var version = "dev"
 
+// subcommand wraps an existing cmd.Command function as a cobra command.
+// Flag parsing stays disabled: every subcommand parses its own args exactly
+// as before, so behavior, flags and help output are unchanged; cobra only
+// provides dispatch, aliases and shell completion.
+func subcommand(name string, aliases []string, hidden bool, run func(context.Context, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:                name,
+		Aliases:            aliases,
+		Hidden:             hidden,
+		DisableFlagParsing: true,
+		RunE: func(c *cobra.Command, args []string) error {
+			if err := run(c.Context(), args); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			return nil
+		},
+	}
+}
+
 func main() {
-	commands := map[string]cmd.Command{
-		"session": {Name: "session", Run: cmd.Session},
-		"set":     {Name: "set", Run: cmd.Set},
-		"rm":      {Name: "rm", Run: cmd.Rm},
-		"get":     {Name: "get", Run: cmd.Get},
-		"export":  {Name: "export", Run: cmd.Export},
-		"list":    {Name: "list", Run: cmd.List},
-		"ls":      {Name: "list", Run: cmd.List},
-		"share":   {Name: "share", Run: cmd.Share},
-		"tree":    {Name: "tree", Run: cmd.Tree},
-		"execute": {Name: "execute", Run: cmd.Execute},
-		"serve":   {Name: "serve", Run: cmd.Serve},
-		"help":    {Name: "help", Run: cmd.Help},
+	root := &cobra.Command{
+		Use:           "ctx",
+		Version:       version,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Args:          cobra.ArbitraryArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help(c.Context(), nil)
+			}
+			return fmt.Errorf("unknown command: %s", args[0])
+		},
 	}
-
-	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
-		if err := cmd.Help(context.Background(), nil); err != nil {
+	root.SetVersionTemplate("{{.Version}}\n")
+	// ctx's help is the hand-written overview in cmd.Help; per-command
+	// detail lives behind each subcommand's own --help flag.
+	root.SetHelpFunc(func(c *cobra.Command, _ []string) {
+		if err := cmd.Help(c.Context(), nil); err != nil {
 			fmt.Fprintf(os.Stderr, "ctx: help: %v\n", err)
-			os.Exit(1)
 		}
-		return
-	}
-	if os.Args[1] == "--version" || os.Args[1] == "version" {
-		fmt.Println(version)
-		return
-	}
+	})
 
-	name := os.Args[1]
-	command, ok := commands[name]
-	if !ok {
-		fmt.Fprintf(os.Stderr, "ctx: unknown command: %s\n", name)
-		os.Exit(1)
-	}
+	root.AddCommand(
+		subcommand("session", nil, false, cmd.Session),
+		subcommand("set", nil, false, cmd.Set),
+		subcommand("rm", nil, false, cmd.Rm),
+		subcommand("get", nil, false, cmd.Get),
+		subcommand("export", nil, false, cmd.Export),
+		subcommand("list", []string{"ls"}, false, cmd.List),
+		subcommand("share", nil, false, cmd.Share),
+		subcommand("tree", nil, false, cmd.Tree),
+		subcommand("trigger", []string{"execute"}, false, cmd.Trigger),
+		subcommand("serve", nil, false, cmd.Serve),
+		subcommand("fire-triggers", nil, true, cmd.FireTriggers),
+		&cobra.Command{
+			Use:  "version",
+			Args: cobra.NoArgs,
+			Run:  func(*cobra.Command, []string) { fmt.Println(version) },
+		},
+		&cobra.Command{
+			Use:  "help",
+			RunE: func(c *cobra.Command, _ []string) error { return cmd.Help(c.Context(), nil) },
+		},
+	)
 
-	if err := command.Run(context.Background(), os.Args[2:]); err != nil {
-		fmt.Fprintf(os.Stderr, "ctx: %s: %v\n", command.Name, err)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "ctx: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -1,3 +1,5 @@
+// Package render turns stored context into output: recursive $VAR template
+// substitution and session tree rendering.
 package render
 
 import (

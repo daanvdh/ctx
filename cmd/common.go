@@ -1,17 +1,14 @@
+// Package cmd contains one entry point per ctx sub-command. Each function
+// parses its own arguments and delegates to internal/app.
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 
 	"ctx/internal/app"
+	"ctx/internal/config"
 )
-
-type Command struct {
-	Name string
-	Run  func(context.Context, []string) error
-}
 
 func newApp() (*app.App, error) {
 	return app.New()
@@ -37,7 +34,10 @@ func sessionArg(args []string, hasExplicitSession bool) (string, error) {
 	}
 	sessionID := os.Getenv("CTX_ID")
 	if sessionID == "" {
-		return "", fmt.Errorf("no session ID provided and CTX_ID is not set")
+		sessionID = config.DefaultSession()
+	}
+	if sessionID == "" {
+		return "", fmt.Errorf("no session ID provided, CTX_ID is not set, and no default_session is configured")
 	}
 	return sessionID, nil
 }

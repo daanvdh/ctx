@@ -32,6 +32,10 @@ Anything you can run from a shell, ctx can run deterministically and add to the 
 - **Scheduled watch** — A cron-style trigger (`schedule`, fired by `ctx serve`'s built-in scheduler) polls a project on an interval and starts a run when something changes, instead of an agent sitting idle in a loop.
 - **Write from anywhere** — CI, a git hook, or another tool writes to ctx via the CLI or MCP, and that state change fires the right downstream trigger. ctx becomes the shared state your tools coordinate through.
 
+## Example: a configuration-only agent harness
+
+[`examples/agent-harness`](examples/agent-harness) is a complete agent loop — plan → implement → verdict → report, with failure recovery — built from nothing but six trigger files and ctx state. It runs end-to-end with stub commands (no AI required) and swaps onto a real harness with one `ctx set`.
+
 ## Quick Install
 
 ```bash
@@ -55,6 +59,13 @@ go install github.com/daanvdh/ctx@latest
   db_path: /tmp/my‑ctx.db
   ```
 - Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.yml` to use a different directory.
+- A default session can be configured in `settings.yml`, globally and/or per directory. When a command needs a session and `CTX_ID` is unset, the most specific `default_sessions` path containing the working directory wins, then `default_session`; `CTX_ID` always takes precedence over both:
+  ```yaml
+  default_session: main
+  default_sessions:
+    /Users/me/git/ctx: ctx-dev
+    /Users/me/git/blog: blog
+  ```
 - HTTP MCP defaults and authentication can also be configured in `settings.yml`:
   ```yaml
   mcp_http_addr: 127.0.0.1:7331
@@ -84,7 +95,7 @@ go install github.com/daanvdh/ctx@latest
 | `ctx list [session] [--full] [--raw]` (alias: `ctx ls`) | `ctx list $SID`<br>`ctx list $SID --full`<br>`ctx list $SID --raw` | Print all visible keys with type tags, rendering `$VAR` placeholders by default. Strings and documents are shown as first-line previews unless `--full` shows the complete value; `--raw` skips rendering. Unlike `ctx get`, a listing never fails over one entry's unresolved placeholder — it's left unchanged instead. |
 | `ctx export [session] [--include-docs] [--files-as-paths]` | `ctx export $SID`<br>`ctx export $SID --include-docs --files-as-paths` | Emit shell-compatible assignments, including `CTX_ID`. Plain export includes only strings; opt into documents and file-reference paths with flags. Use with `eval "$(ctx export …)"` or `env $(ctx export …) command`. |
 | `ctx share <from> <to>` | `ctx share root worker` | Make keys from one session visible to another session before ancestor lookup. |
-| `ctx execute [session] <template>` | `ctx execute $SID review` | Execute a trigger template from the trigger directory. The filename extension is optional. |
+| `ctx trigger [session] <template>` (alias: `ctx execute`) | `ctx trigger $SID review` | Fire a trigger template from the trigger directory. The filename extension is optional. |
 | `ctx tree [session_id] [-a] [--format text\|json]` | `ctx tree`<br>`ctx tree $SID`<br>`ctx tree -a` | Render the session hierarchy as an ASCII tree, showing ids and key/value pairs. Scoped to `session_id` (or `CTX_ID` if set) — its ancestors and descendants only. Use `-a`/`--all`, or omit both `session_id` and `CTX_ID`, to show the full tree of all sessions. |
 | `ctx --version` | `ctx --version` | Print the build version. |
 | `ctx help` | `ctx help` | Show a short usage summary (also shown when calling `ctx` without arguments). |
@@ -199,7 +210,7 @@ Available tools:
 | `ctx_tree` | Render the complete session tree as text or JSON. |
 | `ctx_render` | Render a stored template key with visible context variables. |
 | `ctx_delete` | Delete a session. Fails if it has child sessions unless `recursive` is set. |
-| `ctx_execute` | Execute a trigger template from the ctx trigger directory. |
+| `ctx_trigger` | Fire a trigger template from the ctx trigger directory. (`ctx_execute` still accepted as an alias.) |
 
 The server uses the same settings and SQLite database as the CLI, so `db_path`
 and `trigger_location` in `$HOME/.config/ctx/settings.yml` apply to both.
@@ -272,7 +283,7 @@ Analyse and comment on PR $PR_NUMBER:
 $STORY
 ```
 
-`script` is required. `trigger-session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only executed manually with `ctx execute`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
+`script` is required. `trigger-session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only fired manually with `ctx trigger`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
 
 **`ancestor` matching** – `ancestor: <session>` requires that `<session>` is an ancestor of the triggering session (found by walking its parent chain), based on an exact ID match. It's optional and ANDs with the other matchers; leave it unset to match any ancestor (or none).
 
@@ -311,7 +322,31 @@ script: |
 Summarise recent changes for $PROJECT.
 ```
 
-When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, sets `CTX_ID` for the invoked script, and writes a JSON audit record under `trigger_log_<trigger-name>_<timestamp>` (a valid shell variable name, so `ctx export` can expose it) in the triggering session. Use `execution-session: <session>` to run the script with a specific existing session instead.
+When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, and sets `CTX_ID` for the invoked script. Use `execution-session: <session>` to run the script with a specific existing session instead.
+
+**Variables in frontmatter** – `execution-session` and `output-entry` may reference ctx values of the triggering session, e.g. `execution-session: $STORY_ID`, rendered when the trigger fires. The built-in `$CTX_TRIGGER_SESSION` names the triggering session itself — `execution-session: $CTX_TRIGGER_SESSION` runs the script (and lands `output-entry`) in the session that fired the trigger; it is also exported to the script's environment. Matcher fields (`trigger-session`, `ancestor`, `entries`) stay literal, and a schedule-driven trigger without filters has no triggering session, so its `execution-session` must be literal.
+
+**Background execution** – `ctx set` from the CLI returns immediately: matching and running triggers happens in a detached `ctx fire-triggers` process (an internal command), so a slow harness never blocks the writer. Within that runner, same-`order` triggers still run in parallel and order groups sequentially, exactly as before. Set `CTX_TRIGGERS_SYNC=1` to wait for triggers in the foreground instead (useful in scripts and CI that must observe the trigger's effect before continuing).
+
+**Timeout** – set `timeout: <duration>` (Go syntax, e.g. `30s`, `10m`) to kill a script that runs too long; the run is recorded as `script timed out after <duration>`. Without it, scripts run unbounded.
+
+**Output capture** – set `output-entry: <KEY>` in the frontmatter to store the script's trimmed stdout under that key in the execution session after a successful run (non-zero exit writes nothing). The write is an ordinary `ctx` write, so it fires downstream triggers — this is the standard way to collect harness output and chain the next step:
+
+```yaml
+entries:
+  STATUS:
+    - value: REVIEW
+output-entry: REVIEW_RESULT
+script: pi "$CTX_TRIGGER_PROMPT"
+---
+Review the change described in $STORY. End with APPROVED or CHANGES_REQUESTED.
+```
+
+**Failure capture** – set `failure-entry: <KEY>` to write a short failure summary (trigger name, exit code, stderr tail) to that key in the execution session when the script fails or times out. Like `output-entry`, it's an ordinary write, so a recovery trigger can fire on it instead of the chain stalling silently.
+
+**Chaining** – a `ctx set` from inside a trigger script fires downstream triggers like any other write, so triggers can chain (build writes `STATUS=FAILED`, a second trigger fires on it). Each nesting level increments `CTX_TRIGGER_DEPTH`; past the depth limit (default 5, configurable with `max_trigger_depth` in `settings.yml`) writes stop firing triggers, so accidental loops terminate. Set `CTX_SUPPRESS_TRIGGERS=1` in a script for writes that should never fire anything.
+
+**Logging** – set `logging: true` in the frontmatter to write a JSON audit record under `trigger_log_<trigger-name>_<timestamp>` (a valid shell variable name, so `ctx export` can expose it) in the triggering session for every run. Logging is off by default; script failures are still reported on stderr.
 
 **Multi-variable bodies** – a body can be split into named blocks with `<!-- ctx:var NAME -->` markers. Each marker starts a new block running until the next marker (or EOF); surrounding blank lines are trimmed. Content before the first marker (or the whole body, if there are no markers) becomes `CTX_TRIGGER_PROMPT`. Every block, `$VAR`-rendered against the triggering session's values, is exported as an environment variable of the same name to the script — the script decides how and where to use each one, nothing is auto-appended. A variable defined this way takes precedence over a ctx-session value of the same name.
 
@@ -333,7 +368,7 @@ Coordinate planner → coder to fix the failing tests in this PR.
 
 Trigger bodies with no markers still parse the same way: the whole body becomes `CTX_TRIGGER_PROMPT`. Existing trigger files that relied on the old implicit trailing-argument behavior now need `script` to reference `"$CTX_TRIGGER_PROMPT"` explicitly, as in the examples above.
 
-**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. `schedule` is mutually exclusive with `any-change`, `trigger-session`, `ancestor`, and `entries` — a trigger is either schedule-driven or transition-driven, never both — and requires `execution-session` to be set, since a schedule-driven trigger has no triggering session to read/write vars from or log to.
+**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. A schedule-driven trigger never fires on writes (and `any-change` can't be combined with it).
 
 A running `ctx serve --http` or bare `ctx serve` (see [MCP Server POC](#mcp-server-poc)) polls every `schedule`-bearing trigger roughly every 30 seconds and fires each one at most once per matching cron minute:
 
@@ -345,25 +380,67 @@ script: pi "$CTX_TRIGGER_PROMPT"
 Check for updates on $PROJECT.
 ```
 
+`schedule` can be combined with the `trigger-session`, `ancestor`, and `entries` filters. On each matching tick, every session whose *current state* satisfies all filters becomes a triggering session, and the trigger fires once per matching session — so one cron trigger can poll every active task session. An `entries` key with no values means "the key must be visible in that session"; with values, the current value must equal one of them. Without filters, `execution-session` is required (there is no triggering session otherwise) and must be literal:
+
+```yaml
+schedule: "*/5 * * * *"
+entries:
+  STATUS:
+    - value: WATCHING
+script: check-upstream "$PROJECT" && ctx set STATUS CHANGED
+---
+```
+
 Scheduled triggers are meant to stay narrowly scoped — poll something external and write the result into context — with a separate, ordinary transition-based trigger reacting to that write (e.g. "a PR was created, review it").
 
 If no persistent `ctx serve` process is running, skip `schedule` entirely and point OS cron directly at a schedule-less trigger instead — no `ctx`-side due-checking needed:
 
 ```
-* * * * * ctx execute <session> <template>
+* * * * * ctx trigger <session> <template>
 ```
+
+## Webhooks
+
+`ctx serve --http` also serves `POST /webhooks/{source}`: a config-driven ingestion endpoint for GitHub, GitLab, Jira, or any other service that can send an HTTP webhook. Adding a source needs no code — drop an adapter file at `~/.config/ctx/webhooks/{source}.yaml`:
+
+```yaml
+# ~/.config/ctx/webhooks/github.yaml
+verify: { type: hmac_sha256, header: X-Hub-Signature-256, secret_env: GITHUB_WEBHOOK_SECRET }
+event_type: { header: X-GitHub-Event }
+delivery_id: { header: X-GitHub-Delivery }
+fields: { repo: repository.full_name, ref_id: issue.number }
+session: github        # optional; defaults to the source name
+```
+
+- `verify` — how deliveries are authenticated: `hmac_sha256` (HMAC of the raw body, GitHub-style `sha256=<hex>` header), `shared_token` (header equals the secret), `bearer` (`Authorization: Bearer <secret>`), or `none`. The secret is read from the environment variable named by `secret_env`; invalid or unverifiable requests get a 401 and are never persisted.
+- `event_type` / `delivery_id` — where to find the event name and the delivery's unique id, either `{ header: X }` or `{ field: dotted.json.path }`. Duplicate deliveries (same source + delivery id) are ignored.
+- `fields` — extra values to pull out of the JSON payload, each stored as `WEBHOOK_<NAME>`.
+
+A verified delivery writes `WEBHOOK_SOURCE`, `WEBHOOK_DELIVERY`, `WEBHOOK_PAYLOAD` (the raw body), one `WEBHOOK_<NAME>` per configured field, and finally `WEBHOOK_EVENT` into the session — and that last write fires triggers as usual. So routing an event to a script is just an ordinary trigger with `entries` filters (include `WEBHOOK_EVENT`, the key written last, so the trigger sees the complete event):
+
+```yaml
+trigger-session: github
+entries:
+  WEBHOOK_EVENT:
+    - value: issues
+  WEBHOOK_REPO:
+    - value: daanvdh/ctx
+script: handle-issue "$WEBHOOK_REF_ID"
+```
+
+Working adapter examples for GitHub, GitLab, and Jira — including where to register the webhook on each platform — are in [`examples/webhooks/`](examples/webhooks). As a fallback for missed deliveries (the dedupe cache is in-memory and cleared on restart), pair the webhook with a coarse `schedule:` trigger that reconciles state on an interval.
 
 ## `ctx tree` output example
 
 ```text
 5f2a1c9b
- PROJECT_ID gitlab-org/myproject
- MR_IID 412
+ PROJECT_ID: gitlab-org/myproject
+ MR_IID: 412
 ├── 8e7d3a4f
-│     DISCUSSION_ID abc123def456
+│     DISCUSSION_ID: abc123def456
 └── a1b2c3d4
-      REPORT [path] /tmp/report.txt
-      STORY Fix issue 45 ...
+      REPORT: [path] /tmp/report.txt
+      STORY: Fix issue 45 ...
 ```
 
 The tree displays sessions sorted alphabetically, with child nodes indented.

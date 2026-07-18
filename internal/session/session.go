@@ -1,3 +1,4 @@
+// Package session generates and validates session IDs and keys.
 package session
 
 import (

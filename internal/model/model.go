@@ -1,3 +1,5 @@
+// Package model holds the data types shared across ctx: typed entries,
+// session tree nodes and the legacy ContextFile document.
 package model
 
 import "time"

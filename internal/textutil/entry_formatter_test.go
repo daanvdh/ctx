@@ -47,7 +47,7 @@ func TestLineFormatsStringWithoutEscapedNewlines(t *testing.T) {
 
 func TestLineFormatsStringWithPreview(t *testing.T) {
 	got := Line("TEXT", model.NewEntry("first line\nsecond line", model.ValueTypeString))
-	if got != "TEXT first line ..." {
+	if got != "TEXT: first line ..." {
 		t.Fatalf("Line = %q, want first-line string preview with truncation marker and no type label", got)
 	}
 }

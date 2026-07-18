@@ -1,3 +1,7 @@
+// Package app implements the core ctx operations — session management,
+// entry storage and retrieval, rendering, trigger execution and scheduling —
+// on top of a store.Store. It is the shared layer between the CLI commands
+// and the MCP server.
 package app
 
 import (
@@ -5,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,34 +22,57 @@ import (
 	"ctx/internal/session"
 	"ctx/internal/store"
 	"ctx/internal/textutil"
+	"ctx/internal/trigger"
 )
 
 const (
 	TreeFormatText = "text"
 	TreeFormatJSON = "json"
-	MaxStringBytes = 500 * 1024
+	// DefaultMaxStringBytes caps stored string values (500KB), overridable
+	// with max_string_bytes in settings.yml.
+	DefaultMaxStringBytes = 500 * 1024
 )
 
-type Store interface {
-	CreateSession(ctx context.Context, id string, parentID *string) error
-	SetValue(ctx context.Context, sessionID, key, value string) error
-	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
-	RemoveEntry(ctx context.Context, sessionID, key string) error
-	GetValue(ctx context.Context, sessionID, key string) (string, error)
-	GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error)
-	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
-	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
-	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
-	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
-	DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error
+// maxStringBytes returns the size limit for stored string values,
+// overridable with max_string_bytes in settings.yml for large contexts.
+func maxStringBytes() int {
+	if s, err := config.LoadSettings(); err == nil && s.MaxStringBytes > 0 {
+		return s.MaxStringBytes
+	}
+	return DefaultMaxStringBytes
 }
 
+// Store is the persistence interface App runs on. It aliases store.Store so
+// there is a single definition of the contract; the alias keeps existing
+// app.Store references (e.g. in tests) working.
+type Store = store.Store
+
+// App implements the ctx operations shared by the CLI commands and the MCP
+// server on top of a Store.
 type App struct {
 	store  Store
 	stdout io.Writer
 	stderr io.Writer
+	logger *slog.Logger
+	// backgroundTriggers makes writes fire matching triggers in a detached
+	// ctx process instead of blocking the caller. Enabled by the CLI set
+	// path; stays off for tests, the MCP server, and the scheduler.
+	backgroundTriggers bool
 }
 
+// setStderr redirects both trigger-script stderr passthrough and diagnostic
+// logging to w. Tests use it to capture or silence output.
+func (a *App) setStderr(w io.Writer) {
+	a.stderr = w
+	a.logger = NewLogger(w)
+}
+
+// EnableBackgroundTriggers makes this App fire triggers in a detached
+// background process so writes return immediately.
+func (a *App) EnableBackgroundTriggers() { a.backgroundTriggers = true }
+
+// New builds an App from the user's settings: remote-backed when
+// remote_mcp_url is configured, otherwise backed by the local sqlite db.
 func New() (*App, error) {
 	settings, err := config.LoadSettings()
 	if err != nil {
@@ -61,11 +89,14 @@ func New() (*App, error) {
 	return NewWithStore(store.NewSQLite(dbPath)), nil
 }
 
+// NewWithStore builds an App on an explicit Store, writing to stdout/stderr.
+// Tests use it to inject fakes and capture output.
 func NewWithStore(s Store) *App {
 	return &App{
 		store:  s,
 		stdout: os.Stdout,
 		stderr: os.Stderr,
+		logger: NewLogger(os.Stderr),
 	}
 }
 
@@ -106,6 +137,14 @@ func (a *App) SetValue(ctx context.Context, sessionID, key, value string) error 
 }
 
 func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error {
+	return a.setEntryAtDepth(ctx, sessionID, key, entry, triggerDepth())
+}
+
+// setEntryAtDepth stores an entry and fires matching triggers at the given
+// trigger chain depth. Depth is threaded explicitly so in-process chained
+// writes (e.g. output-entry) count against maxTriggerDepth like writes made
+// by spawned ctx processes do via CTX_TRIGGER_DEPTH.
+func (a *App) setEntryAtDepth(ctx context.Context, sessionID, key string, entry model.Entry, depth int) error {
 	entry = model.NewEntry(entry.Value, entry.ValueType)
 	entry, err := prepareEntry(entry)
 	if err != nil {
@@ -121,15 +160,24 @@ func (a *App) SetEntry(ctx context.Context, sessionID, key string, entry model.E
 	if os.Getenv("CTX_SUPPRESS_TRIGGERS") == "1" {
 		return nil
 	}
+	if limit := maxTriggerDepth(); depth >= limit {
+		a.logger.Warn("trigger depth limit reached; not firing triggers", "limit", limit, "key", key)
+		return nil
+	}
 	if oldErr != nil {
 		oldValue = ""
 	}
-	return a.ExecuteMatchingTriggers(ctx, TriggerChange{
+	change := TriggerChange{
 		SessionID: sessionID,
 		Key:       key,
 		OldValue:  oldValue,
 		NewValue:  entry.Value,
-	})
+		Depth:     depth,
+	}
+	if a.backgroundTriggers {
+		return spawnTriggerRunner(change)
+	}
+	return a.ExecuteMatchingTriggers(ctx, change)
 }
 
 func (a *App) RemoveEntry(ctx context.Context, sessionID, key string) error {
@@ -454,7 +502,7 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return fmt.Errorf("failed to read template %s: %w", templatePath, err)
 	}
 
-	def, err := parseTriggerDefinition(templatePath, string(data))
+	def, err := trigger.Parse(templatePath, string(data))
 	if err != nil {
 		return err
 	}
@@ -464,16 +512,24 @@ func (a *App) Execute(ctx context.Context, sessionID, templateName string) error
 		return err
 	}
 
-	triggerVars, err := renderTriggerVars(def.PromptTemplate, vars)
+	triggerVars, err := trigger.RenderVars(def.PromptTemplate, vars)
 	if err != nil {
 		return err
 	}
 
-	env := append(os.Environ(), "CTX_SUPPRESS_TRIGGERS=1", "CTX_ID="+sessionID)
+	env := triggerEnv(triggerDepth()+1, sessionID)
 	for name, value := range triggerVars {
 		env = append(env, name+"="+value)
 	}
+	if def.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, def.Timeout)
+		defer cancel()
+	}
 	if _, err := runScript(ctx, def.Script, vars, triggerVars, env, a.stdout, a.stderr); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("script timed out after %s", def.Timeout)
+		}
 		return fmt.Errorf("script execution failed: %w", err)
 	}
 	return nil
@@ -509,15 +565,6 @@ func triggerTemplatePath(templateName string) (string, error) {
 		return "", fmt.Errorf("multiple trigger templates match %q", templateName)
 	}
 	return templatePath, nil
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func sortedEntryKeys(m map[string]model.Entry) []string {
@@ -568,8 +615,8 @@ func absoluteExistingPath(path string) (string, error) {
 func validateEntry(entry model.Entry) error {
 	switch entry.ValueType {
 	case model.ValueTypeString:
-		if len([]byte(entry.Value)) > MaxStringBytes {
-			return fmt.Errorf("value exceeds 500KB. Consider splitting into multiple keys or referencing a file with --path")
+		if limit := maxStringBytes(); len(entry.Value) > limit {
+			return fmt.Errorf("value exceeds %d bytes (max_string_bytes). Consider splitting into multiple keys or referencing a file with --path", limit)
 		}
 		return nil
 	case model.ValueTypeFileRef:
