@@ -399,6 +399,37 @@ If no persistent `ctx serve` process is running, skip `schedule` entirely and po
 * * * * * ctx trigger <session> <template>
 ```
 
+## Webhooks
+
+`ctx serve --http` also serves `POST /webhooks/{source}`: a config-driven ingestion endpoint for GitHub, GitLab, Jira, or any other service that can send an HTTP webhook. Adding a source needs no code — drop an adapter file at `~/.config/ctx/webhooks/{source}.yaml`:
+
+```yaml
+# ~/.config/ctx/webhooks/github.yaml
+verify: { type: hmac_sha256, header: X-Hub-Signature-256, secret_env: GITHUB_WEBHOOK_SECRET }
+event_type: { header: X-GitHub-Event }
+delivery_id: { header: X-GitHub-Delivery }
+fields: { repo: repository.full_name, ref_id: issue.number }
+session: github        # optional; defaults to the source name
+```
+
+- `verify` — how deliveries are authenticated: `hmac_sha256` (HMAC of the raw body, GitHub-style `sha256=<hex>` header), `shared_token` (header equals the secret), `bearer` (`Authorization: Bearer <secret>`), or `none`. The secret is read from the environment variable named by `secret_env`; invalid or unverifiable requests get a 401 and are never persisted.
+- `event_type` / `delivery_id` — where to find the event name and the delivery's unique id, either `{ header: X }` or `{ field: dotted.json.path }`. Duplicate deliveries (same source + delivery id) are ignored.
+- `fields` — extra values to pull out of the JSON payload, each stored as `WEBHOOK_<NAME>`.
+
+A verified delivery writes `WEBHOOK_SOURCE`, `WEBHOOK_DELIVERY`, `WEBHOOK_PAYLOAD` (the raw body), one `WEBHOOK_<NAME>` per configured field, and finally `WEBHOOK_EVENT` into the session — and that last write fires triggers as usual. So routing an event to a script is just an ordinary trigger with `entries` filters (include `WEBHOOK_EVENT`, the key written last, so the trigger sees the complete event):
+
+```yaml
+trigger-session: github
+entries:
+  WEBHOOK_EVENT:
+    - value: issues
+  WEBHOOK_REPO:
+    - value: daanvdh/ctx
+script: handle-issue "$WEBHOOK_REF_ID"
+```
+
+Working adapter examples for GitHub, GitLab, and Jira — including where to register the webhook on each platform — are in [`examples/webhooks/`](examples/webhooks). As a fallback for missed deliveries (the dedupe cache is in-memory and cleared on restart), pair the webhook with a coarse `schedule:` trigger that reconciles state on an interval.
+
 ## `ctx tree` output example
 
 ```text

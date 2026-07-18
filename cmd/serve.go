@@ -55,6 +55,7 @@ func Serve(ctx context.Context, args []string) error {
 			ServerName:     opts.serverName,
 			Auth:           auth,
 		}))
+		mux.Handle("/webhooks/", a.WebhookHandler())
 		handler := http.Handler(mux)
 		if opts.debug {
 			handler = mcp.NewAccessLogHandler(handler, os.Stderr)
@@ -103,7 +104,10 @@ Serve the ctx MCP server and/or the trigger scheduler.
             per session, so a ticker here would race across instances)
   (none)    run the trigger scheduler only, no MCP surface
 
---http and --stdio are mutually exclusive.`)
+--http and --stdio are mutually exclusive.
+
+In --http mode, POST /webhooks/{source} ingests webhook events for any
+source with an adapter config at ~/.config/ctx/webhooks/{source}.yaml.`)
 		return nil, nil
 	}
 

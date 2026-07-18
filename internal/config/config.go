@@ -118,6 +118,16 @@ func TriggerDir() (string, error) {
 	return dir, nil
 }
 
+// WebhookDir is where per-source webhook adapter configs live
+// (<source>.yaml, served at POST /webhooks/<source>).
+func WebhookDir() (string, error) {
+	cfgDir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cfgDir, "webhooks"), nil
+}
+
 func LoadSettings() (Settings, error) {
 	settings, _, err := loadSettings()
 	return settings, err
