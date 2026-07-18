@@ -1,3 +1,6 @@
+// Package store persists sessions, entries, shares and trigger-schedule
+// state. It defines the Store interface and two implementations: a local
+// sqlite database and a client for a remote ctx MCP server.
 package store
 
 import (
@@ -13,11 +16,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// ErrAlreadyExists is returned by CreateSession when the session ID is
+// already taken. Callers should match it with errors.Is (or IsAlreadyExists).
 var ErrAlreadyExists = errors.New("session already exists")
 
+// Store is the persistence interface for sessions and their entries. It is
+// the single definition shared by every consumer (app, cmd, mcp) and is
+// implemented by both SQLite and RemoteStore.
 type Store interface {
-	Load(ctx context.Context) (*model.ContextFile, error)
-	Save(ctx context.Context, cf *model.ContextFile) error
 	CreateSession(ctx context.Context, id string, parentID *string) error
 	SetValue(ctx context.Context, sessionID, key, value string) error
 	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
@@ -31,10 +37,15 @@ type Store interface {
 	DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error
 }
 
+// SQLite implements Store on a local sqlite database file.
 type SQLite struct {
 	path string
 }
 
+var _ Store = (*SQLite)(nil)
+
+// NewSQLite returns a Store backed by the sqlite database at path. The
+// database is opened (and migrated) lazily on first use.
 func NewSQLite(path string) *SQLite {
 	return &SQLite{path: path}
 }

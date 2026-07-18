@@ -1,3 +1,7 @@
+// Package app implements the core ctx operations — session management,
+// entry storage and retrieval, rendering, trigger execution and scheduling —
+// on top of a store.Store. It is the shared layer between the CLI commands
+// and the MCP server.
 package app
 
 import (
@@ -25,20 +29,13 @@ const (
 	MaxStringBytes = 500 * 1024
 )
 
-type Store interface {
-	CreateSession(ctx context.Context, id string, parentID *string) error
-	SetValue(ctx context.Context, sessionID, key, value string) error
-	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
-	RemoveEntry(ctx context.Context, sessionID, key string) error
-	GetValue(ctx context.Context, sessionID, key string) (string, error)
-	GetEntry(ctx context.Context, sessionID, key string) (model.Entry, error)
-	Resolve(ctx context.Context, sessionID string) (map[string]string, error)
-	ResolveEntries(ctx context.Context, sessionID string) (map[string]model.Entry, error)
-	ShareContext(ctx context.Context, fromSessionID, toSessionID string) error
-	SessionNodes(ctx context.Context) ([]model.SessionNode, error)
-	DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error
-}
+// Store is the persistence interface App runs on. It aliases store.Store so
+// there is a single definition of the contract; the alias keeps existing
+// app.Store references (e.g. in tests) working.
+type Store = store.Store
 
+// App implements the ctx operations shared by the CLI commands and the MCP
+// server on top of a Store.
 type App struct {
 	store  Store
 	stdout io.Writer
@@ -53,6 +50,8 @@ type App struct {
 // background process so writes return immediately.
 func (a *App) EnableBackgroundTriggers() { a.backgroundTriggers = true }
 
+// New builds an App from the user's settings: remote-backed when
+// remote_mcp_url is configured, otherwise backed by the local sqlite db.
 func New() (*App, error) {
 	settings, err := config.LoadSettings()
 	if err != nil {
@@ -69,6 +68,8 @@ func New() (*App, error) {
 	return NewWithStore(store.NewSQLite(dbPath)), nil
 }
 
+// NewWithStore builds an App on an explicit Store, writing to stdout/stderr.
+// Tests use it to inject fakes and capture output.
 func NewWithStore(s Store) *App {
 	return &App{
 		store:  s,
@@ -542,15 +543,6 @@ func triggerTemplatePath(templateName string) (string, error) {
 		return "", fmt.Errorf("multiple trigger templates match %q", templateName)
 	}
 	return templatePath, nil
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func sortedEntryKeys(m map[string]model.Entry) []string {

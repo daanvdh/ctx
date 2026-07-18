@@ -1,3 +1,5 @@
+// Package mcp exposes ctx as an MCP server over Streamable HTTP or stdio,
+// including the tools/call surface RemoteStore uses as a backend.
 package mcp
 
 import (

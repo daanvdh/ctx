@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -138,6 +139,9 @@ func spawnTriggerRunner(change TriggerChange) error {
 	return cmd.Process.Release()
 }
 
+// ExecuteMatchingTriggers loads all trigger definitions and runs every one
+// whose key pattern and conditions match the given change, honoring each
+// definition's session scope, timeout and failure handling.
 func (a *App) ExecuteMatchingTriggers(ctx context.Context, change TriggerChange) error {
 	defs, err := loadTriggerDefinitions()
 	if err != nil {
@@ -659,8 +663,9 @@ func runScript(ctx context.Context, command string, vars map[string]string, trig
 	}
 
 	if runErr := runner.Run(ctx, file); runErr != nil {
-		if code, ok := interp.IsExitStatus(runErr); ok {
-			return int(code), runErr
+		var status interp.ExitStatus
+		if errors.As(runErr, &status) {
+			return int(status), runErr
 		}
 		return 1, runErr
 	}

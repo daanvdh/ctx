@@ -17,11 +17,11 @@ import (
 )
 
 type fakeStore struct {
-	createdID       string
-	parentID        *string
-	values          map[string]string
-	entries         map[string]model.Entry
-	resolved        map[string]string
+	createdID string
+	parentID  *string
+	values    map[string]string
+	entries   map[string]model.Entry
+	resolved  map[string]string
 	// resolvedBySession, when set, takes precedence over resolved and
 	// returns per-session values, for tests spanning multiple sessions.
 	resolvedBySession map[string]map[string]string

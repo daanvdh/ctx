@@ -1,3 +1,5 @@
+// Package cmd contains one entry point per ctx sub-command. Each function
+// parses its own arguments and delegates to internal/app.
 package cmd
 
 import (

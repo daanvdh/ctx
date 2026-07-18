@@ -1,3 +1,6 @@
+// Package config loads user settings from $HOME/.config/ctx/settings.yml and
+// resolves derived paths such as the sqlite db location and the trigger
+// template directory.
 package config
 
 import (
