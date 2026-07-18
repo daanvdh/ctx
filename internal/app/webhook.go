@@ -180,7 +180,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxStringBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(maxStringBytes())))
 	if err != nil {
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return

@@ -33,6 +33,9 @@ type Settings struct {
 	DefaultSessions map[string]string `yaml:"default_sessions,omitempty"`
 	// MaxTriggerDepth overrides the trigger chain depth limit (default 5).
 	MaxTriggerDepth int `yaml:"max_trigger_depth,omitempty"`
+	// MaxStringBytes overrides the size limit for stored string values in
+	// bytes (default 500KB).
+	MaxStringBytes int `yaml:"max_string_bytes,omitempty"`
 }
 
 // DefaultSessionFor returns the configured default session for cwd: the

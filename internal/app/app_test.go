@@ -443,9 +443,32 @@ func TestGetPreviewRendersByDefault(t *testing.T) {
 
 func TestSetStringRejectsTooLargeContent(t *testing.T) {
 	a := NewWithStore(&fakeStore{})
-	err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry(strings.Repeat("x", MaxStringBytes+1), model.ValueTypeString))
-	if err == nil || !strings.Contains(err.Error(), "value exceeds 500KB") {
+	err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry(strings.Repeat("x", DefaultMaxStringBytes+1), model.ValueTypeString))
+	if err == nil || !strings.Contains(err.Error(), "value exceeds") {
 		t.Fatalf("SetEntry error = %v, want size error", err)
+	}
+}
+
+func TestMaxStringBytesConfigurable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".config", "ctx")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "settings.yml"), []byte("max_string_bytes: 10\n"), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if got := maxStringBytes(); got != 10 {
+		t.Fatalf("maxStringBytes = %d, want 10", got)
+	}
+
+	a := NewWithStore(&fakeStore{})
+	if err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry("0123456789x", model.ValueTypeString)); err == nil || !strings.Contains(err.Error(), "value exceeds 10 bytes") {
+		t.Fatalf("SetEntry error = %v, want configured size error", err)
+	}
+	if err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry("0123456789", model.ValueTypeString)); err != nil {
+		t.Fatalf("SetEntry at limit error: %v", err)
 	}
 }
 

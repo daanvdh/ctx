@@ -26,8 +26,19 @@ import (
 const (
 	TreeFormatText = "text"
 	TreeFormatJSON = "json"
-	MaxStringBytes = 500 * 1024
+	// DefaultMaxStringBytes caps stored string values (500KB), overridable
+	// with max_string_bytes in settings.yml.
+	DefaultMaxStringBytes = 500 * 1024
 )
+
+// maxStringBytes returns the size limit for stored string values,
+// overridable with max_string_bytes in settings.yml for large contexts.
+func maxStringBytes() int {
+	if s, err := config.LoadSettings(); err == nil && s.MaxStringBytes > 0 {
+		return s.MaxStringBytes
+	}
+	return DefaultMaxStringBytes
+}
 
 // Store is the persistence interface App runs on. It aliases store.Store so
 // there is a single definition of the contract; the alias keeps existing
@@ -593,8 +604,8 @@ func absoluteExistingPath(path string) (string, error) {
 func validateEntry(entry model.Entry) error {
 	switch entry.ValueType {
 	case model.ValueTypeString:
-		if len([]byte(entry.Value)) > MaxStringBytes {
-			return fmt.Errorf("value exceeds 500KB. Consider splitting into multiple keys or referencing a file with --path")
+		if limit := maxStringBytes(); len(entry.Value) > limit {
+			return fmt.Errorf("value exceeds %d bytes (max_string_bytes). Consider splitting into multiple keys or referencing a file with --path", limit)
 		}
 		return nil
 	case model.ValueTypeFileRef:
