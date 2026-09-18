@@ -1,0 +1,11 @@
+# GitLab webhook adapter. Copy to ~/.config/ctx/webhooks/gitlab.yaml and
+# export GITLAB_WEBHOOK_SECRET, then serve with: ctx serve --http
+#
+# Register: project (or group) Settings > Webhooks. URL
+# https://<host>/webhooks/gitlab, Secret Token matching
+# GITLAB_WEBHOOK_SECRET, and select the trigger events (push, merge
+# request, note, issue).
+verify: { type: shared_token, header: X-Gitlab-Token, secret_env: GITLAB_WEBHOOK_SECRET }
+event_type: { header: X-Gitlab-Event }
+delivery_id: { header: X-Gitlab-Event-UUID }
+fields: { repo: project.path_with_namespace, ref_id: object_attributes.iid }

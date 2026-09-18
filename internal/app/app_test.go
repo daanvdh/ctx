@@ -3,27 +3,33 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"ctx/internal/model"
 	"ctx/internal/session"
+	"ctx/internal/trigger"
 )
 
 type fakeStore struct {
-	createdID       string
-	parentID        *string
-	values          map[string]string
-	entries         map[string]model.Entry
-	resolved        map[string]string
-	resolvedEntries map[string]model.Entry
-	nodes           []model.SessionNode
-	claimed         map[string]time.Time
-	err             error
+	createdID string
+	parentID  *string
+	values    map[string]string
+	entries   map[string]model.Entry
+	resolved  map[string]string
+	// resolvedBySession, when set, takes precedence over resolved and
+	// returns per-session values, for tests spanning multiple sessions.
+	resolvedBySession map[string]map[string]string
+	resolvedEntries   map[string]model.Entry
+	nodes             []model.SessionNode
+	claimed           map[string]time.Time
+	err               error
 }
 
 // ClaimTriggerSchedule is a fake of store.SQLite's atomic claim, so
@@ -98,9 +104,12 @@ func (f *fakeStore) GetEntry(_ context.Context, _, key string) (model.Entry, err
 	return model.NewEntry(f.values[key], model.ValueTypeString), nil
 }
 
-func (f *fakeStore) Resolve(context.Context, string) (map[string]string, error) {
+func (f *fakeStore) Resolve(_ context.Context, sessionID string) (map[string]string, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.resolvedBySession != nil {
+		return f.resolvedBySession[sessionID], nil
 	}
 	return f.resolved, nil
 }
@@ -435,9 +444,32 @@ func TestGetPreviewRendersByDefault(t *testing.T) {
 
 func TestSetStringRejectsTooLargeContent(t *testing.T) {
 	a := NewWithStore(&fakeStore{})
-	err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry(strings.Repeat("x", MaxStringBytes+1), model.ValueTypeString))
-	if err == nil || !strings.Contains(err.Error(), "value exceeds 500KB") {
+	err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry(strings.Repeat("x", DefaultMaxStringBytes+1), model.ValueTypeString))
+	if err == nil || !strings.Contains(err.Error(), "value exceeds") {
 		t.Fatalf("SetEntry error = %v, want size error", err)
+	}
+}
+
+func TestMaxStringBytesConfigurable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".config", "ctx")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "settings.yml"), []byte("max_string_bytes: 10\n"), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if got := maxStringBytes(); got != 10 {
+		t.Fatalf("maxStringBytes = %d, want 10", got)
+	}
+
+	a := NewWithStore(&fakeStore{})
+	if err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry("0123456789x", model.ValueTypeString)); err == nil || !strings.Contains(err.Error(), "value exceeds 10 bytes") {
+		t.Fatalf("SetEntry error = %v, want configured size error", err)
+	}
+	if err := a.SetEntry(context.Background(), "s1", "TEXT", model.NewEntry("0123456789", model.ValueTypeString)); err != nil {
+		t.Fatalf("SetEntry at limit error: %v", err)
 	}
 }
 
@@ -447,7 +479,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := []string{"A 1", "B 2"}
+	want := []string{"A: 1", "B: 2"}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("List = %v, want %v", lines, want)
 	}
@@ -467,7 +499,7 @@ func TestListFormatsFileRefAsPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [path] " + path
+	want := "SPEC: [path] " + path
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %v, want %q", lines, want)
 	}
@@ -486,7 +518,7 @@ func TestListPreviewsFirstLine(t *testing.T) {
 	if strings.Contains(got, `\n`) || strings.Contains(got, "hidden line") {
 		t.Fatalf("List = %q, want first-line previews only", got)
 	}
-	if !strings.Contains(got, "TEXT text line") || strings.Contains(got, "TEXT [") {
+	if !strings.Contains(got, "TEXT: text line") || strings.Contains(got, "TEXT [") {
 		t.Fatalf("List = %q, want string preview without a type label", got)
 	}
 }
@@ -500,7 +532,7 @@ func TestListFullShowsUntruncatedContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "TEXT text line\nhidden line"
+	want := "TEXT: text line\nhidden line"
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want %q", strings.Join(lines, "\n"), want)
 	}
@@ -519,7 +551,7 @@ func TestListRenderSubstitutesPlaceholdersRecursively(t *testing.T) {
 		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "GREETING hello ada lovelace") {
+	if !strings.Contains(got, "GREETING: hello ada lovelace") {
 		t.Fatalf("List = %q, want recursively rendered GREETING", got)
 	}
 }
@@ -534,7 +566,7 @@ func TestListRenderNeverFailsOnMissingPlaceholder(t *testing.T) {
 		t.Fatalf("List error: %v", err)
 	}
 	got := strings.Join(lines, "\n")
-	if got != "GREETING hello $NOPE" {
+	if got != "GREETING: hello $NOPE" {
 		t.Fatalf("List = %q, want unresolved placeholder left unchanged", got)
 	}
 }
@@ -553,7 +585,7 @@ func TestListRenderSkipsFileRefContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [path] price: $5\n"
+	want := "SPEC: [path] price: $5\n"
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want unrendered file content %q", strings.Join(lines, "\n"), want)
 	}
@@ -573,7 +605,7 @@ func TestListFullRawShowsFileRefPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	want := "SPEC [path] " + path
+	want := "SPEC: [path] " + path
 	if strings.Join(lines, "\n") != want {
 		t.Fatalf("List = %q, want path %q", strings.Join(lines, "\n"), want)
 	}
@@ -819,7 +851,7 @@ func TestTriggerDefinitionAncestorCombinesWithEntries(t *testing.T) {
 }
 
 func TestParseTriggerAncestor(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\nancestor: root\n")
+	def, err := trigger.Parse("test.md", "script: echo\nancestor: root\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -829,7 +861,7 @@ func TestParseTriggerAncestor(t *testing.T) {
 }
 
 func TestParseTriggerRejectsAnyChangeWithAncestor(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change: true\nancestor: root\nscript: echo\n---\nhello")
+	_, err := trigger.Parse("test.md", "any-change: true\nancestor: root\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected any-change with ancestor to fail")
 	}
@@ -858,21 +890,21 @@ func TestAncestorSetWalksParentChain(t *testing.T) {
 func strPtr(s string) *string { return &s }
 
 func TestParseTriggerRejectsAnyChangeWithMatcher(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "any-change: true\nentries:\n  STATUS:\nscript: echo\n---\nhello")
+	_, err := trigger.Parse("test.md", "any-change: true\nentries:\n  STATUS:\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected any-change with entries to fail")
 	}
 }
 
 func TestParseTriggerRequiresIntegerOrder(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "order: first\nscript: echo\n---\nhello")
+	_, err := trigger.Parse("test.md", "order: first\nscript: echo\n---\nhello")
 	if err == nil {
 		t.Fatal("expected non-integer order to fail")
 	}
 }
 
 func TestTriggerOrderDefaultsToZero(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\n---\nhello")
+	def, err := trigger.Parse("test.md", "script: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -882,7 +914,7 @@ func TestTriggerOrderDefaultsToZero(t *testing.T) {
 }
 
 func TestParseTriggerExecutionSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "execution-session: worker\nscript: echo\n---\nhello")
+	def, err := trigger.Parse("test.md", "execution-session: worker\nscript: echo\n---\nhello")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -892,7 +924,7 @@ func TestParseTriggerExecutionSession(t *testing.T) {
 }
 
 func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:")
+	def, err := trigger.Parse("test.md", "script: echo\nentries:\n  STATUS:")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -902,7 +934,7 @@ func TestParseTriggerWithoutPromptSeparator(t *testing.T) {
 }
 
 func TestParseTriggerVarsNoMarkersAssignsWholeBodyToTriggerPrompt(t *testing.T) {
-	got := parseTriggerVars("\n\nhello $NAME\n\n")
+	got := trigger.ParseVars("\n\nhello $NAME\n\n")
 	want := map[string]string{"CTX_TRIGGER_PROMPT": "hello $NAME"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseTriggerVars = %#v, want %#v", got, want)
@@ -911,7 +943,7 @@ func TestParseTriggerVarsNoMarkersAssignsWholeBodyToTriggerPrompt(t *testing.T) 
 
 func TestParseTriggerVarsSplitsOnMarkers(t *testing.T) {
 	body := "intro text\n<!-- ctx:var CTX_AGENTS -->\n## planner\ndo stuff\n\n<!-- ctx:var CTX_PROMPT -->\nfix the bug\n"
-	got := parseTriggerVars(body)
+	got := trigger.ParseVars(body)
 	want := map[string]string{
 		"CTX_TRIGGER_PROMPT": "intro text",
 		"CTX_AGENTS":         "## planner\ndo stuff",
@@ -924,7 +956,7 @@ func TestParseTriggerVarsSplitsOnMarkers(t *testing.T) {
 
 func TestParseTriggerVarsEmptyBeforeFirstMarker(t *testing.T) {
 	body := "<!-- ctx:var CTX_PROMPT -->\nfix the bug\n"
-	got := parseTriggerVars(body)
+	got := trigger.ParseVars(body)
 	if got["CTX_TRIGGER_PROMPT"] != "" {
 		t.Fatalf("CTX_TRIGGER_PROMPT = %q, want empty", got["CTX_TRIGGER_PROMPT"])
 	}
@@ -934,7 +966,7 @@ func TestParseTriggerVarsEmptyBeforeFirstMarker(t *testing.T) {
 }
 
 func TestParseTriggerEntriesWildcard(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\nentries:\n  STATUS:\n  NOTE:\n")
+	def, err := trigger.Parse("test.md", "script: echo\nentries:\n  STATUS:\n  NOTE:\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -948,7 +980,7 @@ func TestParseTriggerEntriesWildcard(t *testing.T) {
 
 func TestParseTriggerEntriesWithValues(t *testing.T) {
 	content := "script: echo\nentries:\n  STATUS:\n    - value: \"DONE\"\n    - value: \"CANCELLED\"\n"
-	def, err := parseTriggerDefinition("test.md", content)
+	def, err := trigger.Parse("test.md", content)
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -958,7 +990,7 @@ func TestParseTriggerEntriesWithValues(t *testing.T) {
 }
 
 func TestParseTriggerSession(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "script: echo\ntrigger-session: my-session\n")
+	def, err := trigger.Parse("test.md", "script: echo\ntrigger-session: my-session\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -968,42 +1000,48 @@ func TestParseTriggerSession(t *testing.T) {
 }
 
 func TestParseTriggerScheduleRequiresExecutionSession(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nscript: echo\n")
+	_, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nscript: echo\n")
 	if err == nil {
 		t.Fatal("expected schedule without execution-session to fail")
 	}
 }
 
-func TestParseTriggerScheduleRejectsTriggerSession(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\ntrigger-session: my-session\nexecution-session: out\nscript: echo\n")
-	if err == nil {
-		t.Fatal("expected schedule combined with trigger-session to fail")
+func TestParseTriggerScheduleAcceptsFilters(t *testing.T) {
+	for _, content := range []string{
+		"schedule: \"* * * * *\"\ntrigger-session: my-session\nscript: echo\n",
+		"schedule: \"* * * * *\"\nancestor: root\nscript: echo\n",
+		"schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n",
+	} {
+		if _, err := trigger.Parse("test.md", content); err != nil {
+			t.Fatalf("trigger.Parse(%q) error: %v", content, err)
+		}
 	}
 }
 
-func TestParseTriggerScheduleRejectsAncestor(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nancestor: root\nexecution-session: out\nscript: echo\n")
-	if err == nil {
-		t.Fatal("expected schedule combined with ancestor to fail")
+func TestScheduleTriggerNeverFiresOnWrites(t *testing.T) {
+	def, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
+	if err != nil {
+		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
-}
-
-func TestParseTriggerScheduleRejectsEntries(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nexecution-session: out\nentries:\n  STATUS:\n    - value: \"DONE\"\nscript: echo\n")
-	if err == nil {
-		t.Fatal("expected schedule combined with entries to fail")
+	ok, err := def.Matches(TriggerChange{SessionID: "s1", Key: "STATUS", NewValue: "DONE"},
+		map[string]string{"STATUS": "DONE"}, nil)
+	if err != nil {
+		t.Fatalf("Matches error: %v", err)
+	}
+	if ok {
+		t.Fatal("schedule-driven trigger must not match a write")
 	}
 }
 
 func TestParseTriggerScheduleRejectsAnyChange(t *testing.T) {
-	_, err := parseTriggerDefinition("test.md", "schedule: \"* * * * *\"\nany-change: true\nexecution-session: out\nscript: echo\n")
+	_, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nany-change: true\nexecution-session: out\nscript: echo\n")
 	if err == nil {
 		t.Fatal("expected schedule combined with any-change to fail")
 	}
 }
 
 func TestParseTriggerSchedule(t *testing.T) {
-	def, err := parseTriggerDefinition("test.md", "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: echo\n")
+	def, err := trigger.Parse("test.md", "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: echo\n")
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -1016,7 +1054,7 @@ func TestParseTriggerSchedule(t *testing.T) {
 }
 
 func TestMatchesScheduleWildcardAlwaysMatches(t *testing.T) {
-	ok, err := matchesSchedule("* * * * *", time.Date(2026, 3, 5, 13, 37, 0, 0, time.UTC))
+	ok, err := trigger.MatchesSchedule("* * * * *", time.Date(2026, 3, 5, 13, 37, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("matchesSchedule error: %v", err)
 	}
@@ -1029,35 +1067,35 @@ func TestMatchesScheduleStepMatchesInterval(t *testing.T) {
 	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
 	notDue := time.Date(2026, 3, 5, 13, 31, 0, 0, time.UTC)
 
-	ok, err := matchesSchedule("*/15 * * * *", due)
+	ok, err := trigger.MatchesSchedule("*/15 * * * *", due)
 	if err != nil || !ok {
-		t.Fatalf("matchesSchedule(due) = %v, %v, want true, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(due) = %v, %v, want true, nil", ok, err)
 	}
-	ok, err = matchesSchedule("*/15 * * * *", notDue)
+	ok, err = trigger.MatchesSchedule("*/15 * * * *", notDue)
 	if err != nil || ok {
-		t.Fatalf("matchesSchedule(notDue) = %v, %v, want false, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(notDue) = %v, %v, want false, nil", ok, err)
 	}
 }
 
 func TestMatchesScheduleExactValueMatchesOnlyThatMoment(t *testing.T) {
-	ok, err := matchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 30, 0, 0, time.UTC))
+	ok, err := trigger.MatchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 30, 0, 0, time.UTC))
 	if err != nil || !ok {
-		t.Fatalf("matchesSchedule(09:30) = %v, %v, want true, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(09:30) = %v, %v, want true, nil", ok, err)
 	}
-	ok, err = matchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 31, 0, 0, time.UTC))
+	ok, err = trigger.MatchesSchedule("30 9 * * *", time.Date(2026, 3, 5, 9, 31, 0, 0, time.UTC))
 	if err != nil || ok {
-		t.Fatalf("matchesSchedule(09:31) = %v, %v, want false, nil", ok, err)
+		t.Fatalf("trigger.MatchesSchedule(09:31) = %v, %v, want false, nil", ok, err)
 	}
 }
 
 func TestMatchesScheduleRejectsWrongFieldCount(t *testing.T) {
-	if _, err := matchesSchedule("* * * *", time.Now()); err == nil {
+	if _, err := trigger.MatchesSchedule("* * * *", time.Now()); err == nil {
 		t.Fatal("expected 4-field schedule to fail")
 	}
 }
 
 func TestMatchesScheduleRejectsOutOfRangeValue(t *testing.T) {
-	if _, err := matchesSchedule("99 * * * *", time.Now()); err == nil {
+	if _, err := trigger.MatchesSchedule("99 * * * *", time.Now()); err == nil {
 		t.Fatal("expected out-of-range minute to fail")
 	}
 }
@@ -1068,7 +1106,7 @@ func writeScheduleTrigger(t *testing.T, home, script string) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "schedule: \"*/15 * * * *\"\nexecution-session: out\nscript: " + script + "\n---\nCheck poll"
+	trigger := "schedule: \"*/15 * * * *\"\nexecution-session: out\nlogging: true\nscript: " + script + "\n---\nCheck poll"
 	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -1153,6 +1191,43 @@ func TestRunDueSchedulesRefiresOnNextMatchingMinute(t *testing.T) {
 	}
 }
 
+func TestRunDueSchedulesFiresPerMatchingSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	outPath := filepath.Join(home, "fired.txt")
+	trigger := "schedule: \"* * * * *\"\nentries:\n  STATUS:\n    - value: \"WATCHING\"\nscript: |\n  echo \"$CTX_TRIGGER_PROMPT\" >> " + outPath + "\n---\npolled $NAME"
+	if err := os.WriteFile(filepath.Join(triggerDir, "watch.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{
+		nodes: []model.SessionNode{{ID: "a"}, {ID: "b"}, {ID: "c"}},
+		resolvedBySession: map[string]map[string]string{
+			"a": {"STATUS": "WATCHING", "NAME": "task-a"},
+			"b": {"STATUS": "DONE", "NAME": "task-b"},
+			"c": {"STATUS": "WATCHING", "NAME": "task-c"},
+		},
+	}
+	a := NewWithStore(fake)
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read fired.txt: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	if !strings.Contains(got, "polled task-a") || !strings.Contains(got, "polled task-c") || strings.Contains(got, "polled task-b") {
+		t.Fatalf("fired for wrong sessions:\n%s", got)
+	}
+}
+
 // fakeStoreNoClaim satisfies App's Store interface but not scheduleClaimer,
 // exercising RunScheduler's fallback for stores that don't support atomic
 // schedule claims (e.g. a remote MCP-backed store).
@@ -1191,7 +1266,7 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 	fake := &fakeStore{}
 	a := NewWithStore(fake)
 
-	err := a.writeTriggerLog(context.Background(), TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger.1"})
+	err := a.writeTriggerLog(context.Background(), TriggerDefinition{Logging: true}, TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger.1"})
 	if err != nil {
 		t.Fatalf("writeTriggerLog error: %v", err)
 	}
@@ -1206,6 +1281,280 @@ func TestWriteTriggerLogKeyIsValidShellVariable(t *testing.T) {
 		return
 	}
 	t.Fatalf("expected a trigger_log key, got %#v", fake.values)
+}
+
+func TestTriggerEnvIncrementsDepth(t *testing.T) {
+	t.Setenv("CTX_TRIGGER_DEPTH", "2")
+	env := triggerEnv(triggerDepth()+1, "s1")
+	found := false
+	for _, kv := range env {
+		if kv == "CTX_TRIGGER_DEPTH=3" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected CTX_TRIGGER_DEPTH=3 in env, got %v", env)
+	}
+}
+
+func TestSetValueSkipsTriggersAtMaxDepth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CTX_TRIGGER_DEPTH", strconv.Itoa(maxTriggerDepth()))
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	outPath := filepath.Join(home, "out.txt")
+	trigger := "any-change: true\nscript: /bin/sh -c 'echo ran > " + outPath + "'\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "loop.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	a.setStderr(io.Discard)
+	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Fatal("expected trigger not to fire at max depth")
+	}
+}
+
+func TestMaxTriggerDepthConfigurable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".config", "ctx")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "settings.yml"), []byte("max_trigger_depth: 12\n"), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if got := maxTriggerDepth(); got != 12 {
+		t.Fatalf("maxTriggerDepth = %d, want 12", got)
+	}
+}
+
+func TestSetValueFiresTriggersBelowMaxDepth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CTX_TRIGGER_DEPTH", "1")
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	outPath := filepath.Join(home, "out.txt")
+	trigger := "any-change: true\nscript: /bin/sh -c 'echo ran > " + outPath + "'\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "chain.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("expected trigger to fire below max depth: %v", err)
+	}
+}
+
+func TestParseTriggerRejectsInvalidTimeout(t *testing.T) {
+	if _, err := trigger.Parse("test.md", "script: echo\ntimeout: soon\n"); err == nil {
+		t.Fatal("expected invalid timeout to fail")
+	}
+	if _, err := trigger.Parse("test.md", "script: echo\ntimeout: -5s\n"); err == nil {
+		t.Fatal("expected negative timeout to fail")
+	}
+}
+
+func TestTriggerTimeoutKillsScript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "any-change: true\nlogging: true\ntimeout: 100ms\nscript: /bin/sleep 5\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "slow.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	start := time.Now()
+	if err := a.SetValue(context.Background(), "s1", "KEY", "v"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("trigger took %s, want script killed near its 100ms timeout", elapsed)
+	}
+	found := false
+	for key, value := range fake.values {
+		if strings.HasPrefix(key, "s1.trigger_log_") && strings.Contains(value, "timed out after") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected timeout recorded in trigger log, got %#v", fake.values)
+	}
+}
+
+func TestOutputEntryCapturesScriptStdout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nexecution-session: work\noutput-entry: RESULT\nscript: /bin/echo \"all good\"\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if got := fake.values["work.RESULT"]; got != "all good" {
+		t.Fatalf("RESULT = %q, want %q (values %#v)", got, "all good", fake.values)
+	}
+}
+
+func TestFrontmatterRendersCtxVariables(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nexecution-session: $STORY_ID\noutput-entry: RESULT\nscript: /bin/echo captured\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "dyn.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{resolved: map[string]string{"STORY_ID": "story-7", "STATUS": "DONE"}}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if got := fake.values["story-7.RESULT"]; got != "captured" {
+		t.Fatalf("RESULT = %q in story-7, want %q (values %#v)", got, "captured", fake.values)
+	}
+}
+
+func TestFrontmatterCtxTriggerSessionBuiltin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  TASK:\nexecution-session: $CTX_TRIGGER_SESSION\noutput-entry: RESULT\nscript: /bin/echo captured\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "self.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "task-1", "TASK", "do it"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if got := fake.values["task-1.RESULT"]; got != "captured" {
+		t.Fatalf("RESULT = %q in task-1, want %q (values %#v)", got, "captured", fake.values)
+	}
+}
+
+func TestParseTriggerRejectsScheduleWithVarExecutionSession(t *testing.T) {
+	_, err := trigger.Parse("test.md", "schedule: \"* * * * *\"\nexecution-session: $STORY\nscript: echo\n")
+	if err == nil {
+		t.Fatal("expected schedule trigger with $VAR execution-session to fail")
+	}
+}
+
+func TestOutputEntrySkippedOnScriptFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nexecution-session: work\noutput-entry: RESULT\nscript: |\n  echo partial\n  exit 3\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "capture.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	a.setStderr(io.Discard)
+	if err := a.SetValue(context.Background(), "s1", "STATUS", "DONE"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, ok := fake.values["work.RESULT"]; ok {
+		t.Fatalf("expected no output entry on failure, got %#v", fake.values)
+	}
+}
+
+func TestFailureEntryWrittenOnScriptFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  TASK:\nexecution-session: work\nfailure-entry: TASK_ERROR\nscript: |\n  echo boom >&2\n  exit 7\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "fail.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	a.setStderr(io.Discard)
+	if err := a.SetValue(context.Background(), "s1", "TASK", "x"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	got := fake.values["work.TASK_ERROR"]
+	if !strings.Contains(got, "exit 7") || !strings.Contains(got, "boom") {
+		t.Fatalf("TASK_ERROR = %q, want exit code and stderr tail (values %#v)", got, fake.values)
+	}
+}
+
+func TestFailureEntryNotWrittenOnSuccess(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "entries:\n  TASK:\nexecution-session: work\nfailure-entry: TASK_ERROR\nscript: /bin/echo fine\n"
+	if err := os.WriteFile(filepath.Join(triggerDir, "fail.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	if err := a.SetValue(context.Background(), "s1", "TASK", "x"); err != nil {
+		t.Fatalf("SetValue error: %v", err)
+	}
+	if _, ok := fake.values["work.TASK_ERROR"]; ok {
+		t.Fatalf("expected no failure entry on success, got %#v", fake.values)
+	}
+}
+
+func TestWriteTriggerLogSkippedWithoutLoggingOptIn(t *testing.T) {
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	err := a.writeTriggerLog(context.Background(), TriggerDefinition{}, TriggerChange{SessionID: "s1"}, triggerLog{Trigger: "my-trigger"})
+	if err != nil {
+		t.Fatalf("writeTriggerLog error: %v", err)
+	}
+	if len(fake.values) != 0 {
+		t.Fatalf("expected no log entry without logging: true, got %#v", fake.values)
+	}
 }
 
 func TestRunDueSchedulesSkipsWhenNotDue(t *testing.T) {
@@ -1227,7 +1576,7 @@ func TestRunDueSchedulesSkipsWhenNotDue(t *testing.T) {
 
 func TestParseTriggerMultilineScript(t *testing.T) {
 	content := "script: |\n  git pull\n  git status\n"
-	def, err := parseTriggerDefinition("test.md", content)
+	def, err := trigger.Parse("test.md", content)
 	if err != nil {
 		t.Fatalf("parseTriggerDefinition error: %v", err)
 	}
@@ -1243,7 +1592,7 @@ func TestSetValueExecutesMatchingTrigger(t *testing.T) {
 	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
 		t.Fatalf("mkdir triggers: %v", err)
 	}
-	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nStory $STORY"
+	trigger := "entries:\n  STATUS:\n    - value: \"DONE\"\nlogging: true\nscript: /bin/echo \"$CTX_TRIGGER_PROMPT\"\n---\nStory $STORY"
 	if err := os.WriteFile(filepath.Join(triggerDir, "done.md"), []byte(trigger), 0o644); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}

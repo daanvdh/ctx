@@ -26,7 +26,7 @@ func Help(_ context.Context, _ []string) error {
 	fmt.Println("  list [session_id] [--full] [--raw]         List all visible entries, rendered by default (alias: ls)")
 	fmt.Println("  tree [session_id] [-a]                     Show the session tree, scoped to session_id (or CTX_ID) unless -a is given")
 	fmt.Println("      --format text|json                   Choose tree output format")
-	fmt.Println("  execute <session> <template>		Execute a stored trigger template using the defined script and placeholders")
+	fmt.Println("  trigger <session> <template>		Fire a stored trigger template using the defined script and placeholders (alias: execute)")
 	fmt.Println("  serve [--http | --stdio]                  Serve the ctx MCP server: --http (scheduler on) or --stdio (no scheduler)")
 	fmt.Println("                                              Neither flag: run the trigger scheduler only, no MCP surface")
 	fmt.Println("  help                                      Show this help message")

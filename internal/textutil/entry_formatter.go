@@ -17,11 +17,11 @@ func Line(key string, entry model.Entry) string {
 	switch entry.ValueType {
 	case model.ValueTypeFileRef:
 		if _, err := os.Stat(entry.Value); err != nil && os.IsNotExist(err) {
-			return fmt.Sprintf("%s [path] %s", key, "\u26a0 path not found")
+			return fmt.Sprintf("%s: [path] %s", key, "\u26a0 path not found")
 		}
-		return fmt.Sprintf("%s [path] %s", key, entry.Value)
+		return fmt.Sprintf("%s: [path] %s", key, entry.Value)
 	case model.ValueTypeString:
-		return fmt.Sprintf("%s %s", key, Preview(entry.Value, PreviewChars))
+		return fmt.Sprintf("%s: %s", key, Preview(entry.Value, PreviewChars))
 	default:
 		return fmt.Sprintf("%s [%s] not implemented", key, entry.ValueType)
 	}
@@ -33,9 +33,9 @@ func Line(key string, entry model.Entry) string {
 // string.
 func FullLine(key string, entry model.Entry, content string) string {
 	if entry.ValueType == model.ValueTypeFileRef {
-		return fmt.Sprintf("%s [path] %s", key, content)
+		return fmt.Sprintf("%s: [path] %s", key, content)
 	}
-	return fmt.Sprintf("%s %s", key, content)
+	return fmt.Sprintf("%s: %s", key, content)
 }
 
 // Preview returns the first line of a value, truncated to max characters.

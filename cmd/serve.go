@@ -34,6 +34,7 @@ func Serve(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	logger := app.NewLogger(os.Stderr)
 	if opts.httpMode {
 		a, err := newApp()
 		if err != nil {
@@ -41,7 +42,7 @@ func Serve(ctx context.Context, args []string) error {
 		}
 		go func() {
 			if err := a.RunScheduler(ctx); err != nil && ctx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "ctx: serve: scheduler: %v\n", err)
+				logger.Error("serve: scheduler stopped", "error", err)
 			}
 		}()
 
@@ -55,16 +56,17 @@ func Serve(ctx context.Context, args []string) error {
 			ServerName:     opts.serverName,
 			Auth:           auth,
 		}))
+		mux.Handle("/webhooks/", a.WebhookHandler())
 		handler := http.Handler(mux)
 		if opts.debug {
 			handler = mcp.NewAccessLogHandler(handler, os.Stderr)
 		}
-		fmt.Fprintf(os.Stderr, "ctx: serve: listening on http://%s%s\n", opts.addr, opts.path)
+		logger.Info("serve: listening", "url", fmt.Sprintf("http://%s%s", opts.addr, opts.path))
 		if auth.Enabled() {
-			fmt.Fprintf(os.Stderr, "ctx: serve: auth enabled; publish http://%s, not only http://%s%s, so OAuth discovery routes are reachable\n", opts.addr, opts.addr, opts.path)
+			logger.Info(fmt.Sprintf("serve: auth enabled; publish http://%s, not only http://%s%s, so OAuth discovery routes are reachable", opts.addr, opts.addr, opts.path))
 		}
 		if opts.debug {
-			fmt.Fprintln(os.Stderr, "ctx: serve: debug access logging enabled")
+			logger.Info("serve: debug access logging enabled")
 		}
 		return http.ListenAndServe(opts.addr, handler)
 	}
@@ -77,7 +79,7 @@ func Serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "ctx: serve: running trigger scheduler only (no MCP surface); use --http or --stdio to also serve MCP")
+	logger.Info("serve: running trigger scheduler only (no MCP surface); use --http or --stdio to also serve MCP")
 	return a.RunScheduler(ctx)
 }
 
@@ -103,7 +105,10 @@ Serve the ctx MCP server and/or the trigger scheduler.
             per session, so a ticker here would race across instances)
   (none)    run the trigger scheduler only, no MCP surface
 
---http and --stdio are mutually exclusive.`)
+--http and --stdio are mutually exclusive.
+
+In --http mode, POST /webhooks/{source} ingests webhook events for any
+source with an adapter config at ~/.config/ctx/webhooks/{source}.yaml.`)
 		return nil, nil
 	}
 

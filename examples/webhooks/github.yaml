@@ -1,0 +1,10 @@
+# GitHub webhook adapter. Copy to ~/.config/ctx/webhooks/github.yaml and
+# export GITHUB_WEBHOOK_SECRET, then serve with: ctx serve --http
+#
+# Register: repo (or org) Settings > Webhooks > Add webhook. Payload URL
+# https://<host>/webhooks/github, content type application/json, secret
+# matching GITHUB_WEBHOOK_SECRET, and pick the events to send.
+verify: { type: hmac_sha256, header: X-Hub-Signature-256, secret_env: GITHUB_WEBHOOK_SECRET }
+event_type: { header: X-GitHub-Event }
+delivery_id: { header: X-GitHub-Delivery }
+fields: { repo: repository.full_name, ref_id: issue.number }

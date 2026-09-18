@@ -47,7 +47,7 @@ func tools() []map[string]any {
 			"no_var":     boolSchema("Fail (non-recursive) or skip (recursive) sessions that have variables."),
 			"no_child":   boolSchema("Recursive only: skip sessions that still have children after the bottom-up pass."),
 		}, []string{"session_id"}),
-		tool("ctx_execute", "Execute a trigger template from the ctx trigger directory.", map[string]any{
+		tool("ctx_trigger", "Fire a trigger template from the ctx trigger directory.", map[string]any{
 			"session_id": stringSchema("Session id."),
 			"template":   stringSchema("Trigger template filename or basename."),
 		}, []string{"session_id", "template"}),

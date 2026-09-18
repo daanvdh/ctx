@@ -1,11 +1,17 @@
+// Package store persists sessions, entries, shares and trigger-schedule
+// state. It defines the Store interface and two implementations: a local
+// sqlite database and a client for a remote ctx MCP server.
 package store
 
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,11 +19,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// ErrAlreadyExists is returned by CreateSession when the session ID is
+// already taken. Callers should match it with errors.Is (or IsAlreadyExists).
 var ErrAlreadyExists = errors.New("session already exists")
 
+// Store is the persistence interface for sessions and their entries. It is
+// the single definition shared by every consumer (app, cmd, mcp) and is
+// implemented by both SQLite and RemoteStore.
 type Store interface {
-	Load(ctx context.Context) (*model.ContextFile, error)
-	Save(ctx context.Context, cf *model.ContextFile) error
 	CreateSession(ctx context.Context, id string, parentID *string) error
 	SetValue(ctx context.Context, sessionID, key, value string) error
 	SetEntry(ctx context.Context, sessionID, key string, entry model.Entry) error
@@ -31,10 +40,15 @@ type Store interface {
 	DeleteSession(ctx context.Context, sessionID string, recursive, noVar, noChild bool) error
 }
 
+// SQLite implements Store on a local sqlite database file.
 type SQLite struct {
 	path string
 }
 
+var _ Store = (*SQLite)(nil)
+
+// NewSQLite returns a Store backed by the sqlite database at path. The
+// database is opened (and migrated) lazily on first use.
 func NewSQLite(path string) *SQLite {
 	return &SQLite{path: path}
 }
@@ -59,6 +73,57 @@ func initDB(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// migrationFiles holds the versioned schema migrations, one .sql file per
+// version, named NNNN_description.sql and applied in version order.
+//
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+// migrationGuards holds Go-side predicates for migrations that sqlite cannot
+// express idempotently; when the guard reports true the version's SQL is
+// skipped (but the version is still recorded as applied).
+var migrationGuards = map[int]func(context.Context, *sql.Tx) (bool, error){
+	// 0003 adds session_data.value_type; databases predating schema
+	// versioning may already have the column, and sqlite has no
+	// ADD COLUMN IF NOT EXISTS.
+	3: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+		return columnExists(ctx, tx, "session_data", "value_type")
+	},
+}
+
+type migrationFile struct {
+	version int
+	path    string
+}
+
+// loadMigrations lists the embedded migration files sorted by version.
+func loadMigrations() ([]migrationFile, error) {
+	entries, err := migrationFiles.ReadDir("migrations")
+	if err != nil {
+		return nil, fmt.Errorf("store: read embedded migrations: %w", err)
+	}
+	files := make([]migrationFile, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		prefix, _, ok := strings.Cut(name, "_")
+		if !ok {
+			return nil, fmt.Errorf("store: migration file %s: name must be NNNN_description.sql", name)
+		}
+		version, err := strconv.Atoi(prefix)
+		if err != nil || version <= 0 {
+			return nil, fmt.Errorf("store: migration file %s: invalid version prefix", name)
+		}
+		files = append(files, migrationFile{version: version, path: path.Join("migrations", name)})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	for i, file := range files {
+		if file.version != i+1 {
+			return nil, fmt.Errorf("store: migration versions must be consecutive from 1; got %d at position %d", file.version, i+1)
+		}
+	}
+	return files, nil
+}
+
 func migrate(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -71,7 +136,12 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
-	if current >= 5 {
+
+	files, err := loadMigrations()
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 || current >= files[len(files)-1].version {
 		return nil
 	}
 
@@ -81,73 +151,28 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	}
 	defer rollback(tx)
 
-	if current < 1 {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        parent_id TEXT,
-        created_at DATETIME
-    )`); err != nil {
-			return fmt.Errorf("store: create sessions table: %w", err)
+	for _, file := range files {
+		if file.version <= current {
+			continue
 		}
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS session_data (
-        session_id TEXT,
-        key TEXT,
-        value TEXT,
-        PRIMARY KEY (session_id, key),
-        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )`); err != nil {
-			return fmt.Errorf("store: create session_data table: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, ?)`, time.Now()); err != nil {
-			return fmt.Errorf("store: record schema migration: %w", err)
-		}
-	}
-	if current < 2 {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS session_shares (
-        from_session_id TEXT NOT NULL,
-        to_session_id TEXT NOT NULL,
-        created_at DATETIME NOT NULL,
-        PRIMARY KEY (from_session_id, to_session_id),
-        FOREIGN KEY(from_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-        FOREIGN KEY(to_session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )`); err != nil {
-			return fmt.Errorf("store: create session_shares table: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, ?)`, time.Now()); err != nil {
-			return fmt.Errorf("store: record schema migration: %w", err)
-		}
-	}
-	if current < 3 {
-		hasColumn, err := columnExists(ctx, tx, "session_data", "value_type")
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := tx.ExecContext(ctx, `ALTER TABLE session_data ADD COLUMN value_type TEXT NOT NULL DEFAULT 'string'`); err != nil {
-				return fmt.Errorf("store: add session_data.value_type: %w", err)
+		skip := false
+		if guard, ok := migrationGuards[file.version]; ok {
+			skip, err = guard(ctx, tx)
+			if err != nil {
+				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, ?)`, time.Now()); err != nil {
-			return fmt.Errorf("store: record schema migration: %w", err)
+		if !skip {
+			script, err := migrationFiles.ReadFile(file.path)
+			if err != nil {
+				return fmt.Errorf("store: read migration %s: %w", file.path, err)
+			}
+			if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+				return fmt.Errorf("store: apply migration %s: %w", file.path, err)
+			}
 		}
-	}
-	if current < 4 {
-		if _, err := tx.ExecContext(ctx, `UPDATE session_data SET value_type = 'string' WHERE value_type = 'doc'`); err != nil {
-			return fmt.Errorf("store: migrate doc entries to string: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (4, ?)`, time.Now()); err != nil {
-			return fmt.Errorf("store: record schema migration: %w", err)
-		}
-	}
-	if current < 5 {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS trigger_schedule_state (
-        trigger_path TEXT PRIMARY KEY,
-        last_fired_at DATETIME NOT NULL
-    )`); err != nil {
-			return fmt.Errorf("store: create trigger_schedule_state table: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (5, ?)`, time.Now()); err != nil {
-			return fmt.Errorf("store: record schema migration: %w", err)
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`, file.version, time.Now()); err != nil {
+			return fmt.Errorf("store: record schema migration %d: %w", file.version, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

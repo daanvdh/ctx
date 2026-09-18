@@ -302,6 +302,67 @@ func TestMigrateConvertsDocValueTypeToString(t *testing.T) {
 	}
 }
 
+// TestMigrateSkipsValueTypeColumnWhenPresent simulates a database predating
+// schema versioning (no schema_migrations rows) whose session_data already
+// has the value_type column, and verifies migration succeeds by skipping the
+// guarded ALTER instead of failing on the duplicate column.
+func TestMigrateSkipsValueTypeColumnWhenPresent(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "test_migrate_legacy.db")
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open db error: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, parent_id TEXT, created_at DATETIME)`); err != nil {
+		t.Fatalf("create sessions error: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE session_data (session_id TEXT, key TEXT, value TEXT, value_type TEXT NOT NULL DEFAULT 'string', PRIMARY KEY (session_id, key))`); err != nil {
+		t.Fatalf("create session_data error: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db error: %v", err)
+	}
+
+	if _, err := Load(dsn); err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	db, err = sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("reopen db error: %v", err)
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if want := len(mustLoadMigrations(t)); version != want {
+		t.Fatalf("schema version = %d, want %d", version, want)
+	}
+}
+
+func TestLoadMigrationsConsecutiveFromOne(t *testing.T) {
+	files := mustLoadMigrations(t)
+	if len(files) == 0 {
+		t.Fatal("no embedded migrations found")
+	}
+	for i, file := range files {
+		if file.version != i+1 {
+			t.Fatalf("migration %s has version %d at position %d; versions must be consecutive from 1", file.path, file.version, i+1)
+		}
+	}
+}
+
+func mustLoadMigrations(t *testing.T) []migrationFile {
+	t.Helper()
+	files, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations error: %v", err)
+	}
+	return files
+}
+
 func TestRemoveEntryDeletesSessionKey(t *testing.T) {
 	tmp := t.TempDir()
 	dsn := filepath.Join(tmp, "test_remove_entry.db")

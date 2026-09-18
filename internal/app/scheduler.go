@@ -2,8 +2,9 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"ctx/internal/trigger"
 )
 
 const schedulerInterval = 30 * time.Second
@@ -24,7 +25,7 @@ type scheduleClaimer interface {
 func (a *App) RunScheduler(ctx context.Context) error {
 	claimer, ok := a.store.(scheduleClaimer)
 	if !ok {
-		fmt.Fprintln(a.stderr, "ctx: serve: scheduler disabled (requires local sqlite store)")
+		a.logger.Warn("serve: scheduler disabled (requires local sqlite store)")
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -33,7 +34,7 @@ func (a *App) RunScheduler(ctx context.Context) error {
 	defer ticker.Stop()
 	for {
 		if err := a.runDueSchedules(ctx, claimer, time.Now()); err != nil {
-			fmt.Fprintf(a.stderr, "ctx: serve: scheduler tick: %v\n", err)
+			a.logger.Error("serve: scheduler tick failed", "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -50,7 +51,7 @@ func (a *App) RunScheduler(ctx context.Context) error {
 // briefly delaying the next due trigger in the same tick is an acceptable
 // trade for keeping this straightforward to test and reason about.
 func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now time.Time) error {
-	defs, err := loadTriggerDefinitions()
+	defs, err := trigger.LoadAll()
 	if err != nil {
 		return err
 	}
@@ -60,9 +61,9 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 		if def.Schedule == "" {
 			continue
 		}
-		due, err := matchesSchedule(def.Schedule, now)
+		due, err := trigger.MatchesSchedule(def.Schedule, now)
 		if err != nil {
-			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: %v\n", def.Name, err)
+			a.logger.Error("serve: trigger failed", "trigger", def.Name, "error", err)
 			continue
 		}
 		if !due {
@@ -71,17 +72,52 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 
 		claimed, err := claimer.ClaimTriggerSchedule(ctx, def.Path, dueAt)
 		if err != nil {
-			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: claim schedule: %v\n", def.Name, err)
+			a.logger.Error("serve: claim schedule failed", "trigger", def.Name, "error", err)
 			continue
 		}
 		if !claimed {
 			continue
 		}
 
-		change := TriggerChange{SessionID: def.ExecutionSession}
-		if err := a.runTriggers(ctx, []TriggerDefinition{def}, change); err != nil {
-			fmt.Fprintf(a.stderr, "ctx: serve: trigger %s: %v\n", def.Name, err)
+		for _, sessionID := range a.scheduleTargets(ctx, def) {
+			change := TriggerChange{SessionID: sessionID}
+			if err := a.runTriggers(ctx, []TriggerDefinition{def}, change); err != nil {
+				a.logger.Error("serve: trigger failed", "trigger", def.Name, "error", err)
+			}
 		}
 	}
 	return nil
+}
+
+// scheduleTargets returns the sessions a due schedule trigger fires for.
+// Without filters it fires once, for its execution-session. With filters
+// (trigger-session, ancestor, entries) it fires once per session whose
+// current state satisfies them, so one cron trigger can serve every
+// matching session.
+func (a *App) scheduleTargets(ctx context.Context, def TriggerDefinition) []string {
+	if !def.HasMatchers() {
+		return []string{def.ExecutionSession}
+	}
+	nodes, err := a.store.SessionNodes(ctx)
+	if err != nil {
+		a.logger.Error("serve: list sessions failed", "trigger", def.Name, "error", err)
+		return nil
+	}
+	var targets []string
+	for _, node := range nodes {
+		vars, err := a.store.Resolve(ctx, node.ID)
+		if err != nil {
+			a.logger.Error("serve: resolve session failed", "trigger", def.Name, "session", node.ID, "error", err)
+			continue
+		}
+		ancestors, err := a.ancestorSet(ctx, node.ID)
+		if err != nil {
+			a.logger.Error("serve: resolve ancestors failed", "trigger", def.Name, "session", node.ID, "error", err)
+			continue
+		}
+		if def.MatchesState(node.ID, vars, ancestors) {
+			targets = append(targets, node.ID)
+		}
+	}
+	return targets
 }
