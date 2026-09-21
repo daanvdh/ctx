@@ -29,6 +29,7 @@ type fakeStore struct {
 	resolvedEntries   map[string]model.Entry
 	nodes             []model.SessionNode
 	claimed           map[string]time.Time
+	running           map[string]time.Time
 	err               error
 }
 
@@ -47,6 +48,31 @@ func (f *fakeStore) ClaimTriggerSchedule(_ context.Context, triggerPath string, 
 	}
 	f.claimed[triggerPath] = dueAt
 	return true, nil
+}
+
+// MarkTriggerRunning and MarkTriggerFinished fake store.SQLite's in-flight
+// tracking, mirroring its staleness rule, so scheduler tests can exercise
+// the skip-if-still-running path against fakeStore.
+func (f *fakeStore) MarkTriggerRunning(_ context.Context, triggerPath string, now time.Time, staleAfter time.Duration) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	if f.running == nil {
+		f.running = make(map[string]time.Time)
+	}
+	if since, ok := f.running[triggerPath]; ok && now.Sub(since) < staleAfter {
+		return false, nil
+	}
+	f.running[triggerPath] = now
+	return true, nil
+}
+
+func (f *fakeStore) MarkTriggerFinished(_ context.Context, triggerPath string) error {
+	if f.err != nil {
+		return f.err
+	}
+	delete(f.running, triggerPath)
+	return nil
 }
 
 func (f *fakeStore) CreateSession(_ context.Context, id string, parentID *string) error {
@@ -1188,6 +1214,78 @@ func TestRunDueSchedulesRefiresOnNextMatchingMinute(t *testing.T) {
 	}
 	if len(fake.values) == 0 {
 		t.Fatal("expected trigger to fire again on the next matching minute")
+	}
+}
+
+func TestRunDueSchedulesSkipsWhilePreviousRunInProgress(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeScheduleTrigger(t, home, "/bin/echo")
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+	var stderr strings.Builder
+	a.setStderr(&stderr)
+
+	triggerPath := filepath.Join(home, ".config", "ctx", "triggers", "poll.md")
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	fake.running = map[string]time.Time{triggerPath: due}
+
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
+	}
+
+	if len(fake.values) != 0 {
+		t.Fatalf("expected trigger to be skipped while still running, got %#v", fake.values)
+	}
+	if !strings.Contains(stderr.String(), "skipping trigger") || !strings.Contains(stderr.String(), "poll") {
+		t.Fatalf("expected a skip warning mentioning the trigger, got stderr %q", stderr.String())
+	}
+}
+
+func TestRunDueSchedulesFiresAfterPreviousRunMarkedFinished(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeScheduleTrigger(t, home, "/bin/echo")
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	triggerPath := filepath.Join(home, ".config", "ctx", "triggers", "poll.md")
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	fake.running = map[string]time.Time{triggerPath: due}
+	// A prior run finishing clears the running marker, so the next due
+	// minute fires normally.
+	delete(fake.running, triggerPath)
+
+	nextDue := due.Add(15 * time.Minute)
+	if err := a.runDueSchedules(context.Background(), fake, nextDue); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
+	}
+	if len(fake.values) == 0 {
+		t.Fatal("expected trigger to fire once its previous run was marked finished")
+	}
+}
+
+func TestRunDueSchedulesReclaimsStaleRunningMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeScheduleTrigger(t, home, "/bin/echo")
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	triggerPath := filepath.Join(home, ".config", "ctx", "triggers", "poll.md")
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	// Simulate a crashed process: running marker set long enough ago that
+	// it's past maxScheduleRunAge and should be reclaimed.
+	fake.running = map[string]time.Time{triggerPath: due.Add(-maxScheduleRunAge - time.Minute)}
+
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
+	}
+	if len(fake.values) == 0 {
+		t.Fatal("expected trigger to fire once its stale running marker was reclaimed")
 	}
 }
 

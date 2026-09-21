@@ -89,6 +89,13 @@ var migrationGuards = map[int]func(context.Context, *sql.Tx) (bool, error){
 	3: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 		return columnExists(ctx, tx, "session_data", "value_type")
 	},
+	// 0006 adds trigger_schedule_state.running_since; concurrent initDB
+	// calls (e.g. from many goroutines opening the same fresh database at
+	// once) can each see it missing before either commits, and sqlite has
+	// no ADD COLUMN IF NOT EXISTS.
+	6: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+		return columnExists(ctx, tx, "trigger_schedule_state", "running_since")
+	},
 }
 
 type migrationFile struct {
@@ -227,6 +234,70 @@ func (s *SQLite) claimTriggerSchedule(ctx context.Context, triggerPath string, d
 		return false, fmt.Errorf("store: commit trigger schedule claim: %w", err)
 	}
 	return true, nil
+}
+
+// MarkTriggerRunning atomically records that triggerPath's claimed run is
+// starting, succeeding (true) only if no run is already marked in progress.
+// A run that's marked running but never cleared by MarkTriggerFinished (a
+// process that crashed mid-run) is treated as finished once it's older than
+// staleAfter, so a stuck flag can't wedge the trigger forever. Callers
+// should call MarkTriggerFinished when the run completes, success or not.
+func (s *SQLite) MarkTriggerRunning(ctx context.Context, triggerPath string, now time.Time, staleAfter time.Duration) (bool, error) {
+	var started bool
+	err := retryBusy(ctx, func() error {
+		var err error
+		started, err = s.markTriggerRunning(ctx, triggerPath, now, staleAfter)
+		return err
+	})
+	return started, err
+}
+
+func (s *SQLite) markTriggerRunning(ctx context.Context, triggerPath string, now time.Time, staleAfter time.Duration) (bool, error) {
+	db, err := initDB(ctx, s.path+"?_txlock=immediate")
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: begin immediate transaction: %w", err)
+	}
+	defer rollback(tx)
+
+	var runningSince sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT running_since FROM trigger_schedule_state WHERE trigger_path = ?`, triggerPath).Scan(&runningSince)
+	if err != nil && err != sql.ErrNoRows {
+		return false, fmt.Errorf("store: read trigger running state %s: %w", triggerPath, err)
+	}
+	if runningSince.Valid && now.Sub(runningSince.Time) < staleAfter {
+		return false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE trigger_schedule_state SET running_since = ? WHERE trigger_path = ?`, now, triggerPath); err != nil {
+		return false, fmt.Errorf("store: mark trigger running %s: %w", triggerPath, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: commit trigger running claim: %w", err)
+	}
+	return true, nil
+}
+
+// MarkTriggerFinished clears triggerPath's in-progress marker, set by an
+// earlier MarkTriggerRunning call, so its next due run isn't skipped as
+// still-running.
+func (s *SQLite) MarkTriggerFinished(ctx context.Context, triggerPath string) error {
+	return retryBusy(ctx, func() error {
+		db, err := initDB(ctx, s.path)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if _, err := db.ExecContext(ctx, `UPDATE trigger_schedule_state SET running_since = NULL WHERE trigger_path = ?`, triggerPath); err != nil {
+			return fmt.Errorf("store: mark trigger finished %s: %w", triggerPath, err)
+		}
+		return nil
+	})
 }
 
 func columnExists(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {

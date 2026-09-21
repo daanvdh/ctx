@@ -112,6 +112,8 @@ script: pi "$CTX_TRIGGER_PROMPT"
 Check for updates on $PROJECT.
 ```
 
+If a run is still in progress when the trigger comes due again, that due minute is skipped (with a warning logged) rather than starting a second, overlapping run — keep `script` well under the schedule interval so runs don't pile up.
+
 `schedule` can be combined with the `trigger-session`, `ancestor`, and `entries` filters. On each matching tick, every session whose *current state* satisfies all filters becomes a triggering session, and the trigger fires once per matching session — so one cron trigger can poll every active task session. An `entries` key with no values means "the key must be visible in that session"; with values, the current value must equal one of them. Without filters, `execution-session` is required (there is no triggering session otherwise) and must be literal:
 
 ```yaml
