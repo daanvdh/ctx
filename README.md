@@ -5,11 +5,16 @@
 
 **Do more with simpler models.**
 
-Deterministic workflows should run deterministically. Today we let agents do everything, which inflates prompt and orchestration complexity, burns tokens, and sometimes forces a stronger model than the task actually needs.
+Deterministic workflows should run deterministically. 
+Today we let agents do everything, which inflates prompt and orchestration complexity, burns tokens, and sometimes 
+forces a stronger model than the task actually needs.
 
 ***ctx is a key-value store with built-in shell scripting that triggers on context changes.***
 
-ctx brings back control over the workflow while leaving the reasoning to your favorite harness. You select a task for execution; ctx picks up the changed state, creates the branch, pulls the task and project data, and constructs the prompt — all deterministically, no LLM needed. The harness receives a prompt it can reason from immediately, without a single tool call first.
+ctx brings back control over the workflow while leaving the reasoning to your favorite harness. 
+You select a task for execution; ctx picks up the changed state, creates the branch, pulls the task and project data, 
+and constructs the prompt — all deterministically, no LLM needed. The harness receives a prompt it can reason from 
+immediately, without a single tool call first.
 
 Anything you can run from a shell, ctx can run deterministically and add to the context.
 
