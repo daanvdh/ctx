@@ -87,3 +87,5 @@ remote_mcp_url: http://ctx-host:7331/mcp
 # one. Should match the mcp_token of the settings for the server. Default: ""
 remote_mcp_token: "my-bearer-token"
 ```
+
+Once `remote_mcp_url` is set, every `ctx` command talks to that server's `tools/call` endpoint instead of a local db. `ctx rm` and `ctx set --path` are not supported yet over a remote backend (the MCP protocol has no tool for them).

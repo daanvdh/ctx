@@ -59,33 +59,9 @@ go install github.com/daanvdh/ctx@latest
 
 ## Configuration
 
-- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`. This location can be changed by creating a YAML settings file (`$HOME/.config/ctx/settings.yml`) with a `db_path` field, for example:
-  ```yaml
-  db_path: /tmp/my‑ctx.db
-  ```
-- Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.yml` to use a different directory.
-- A default session can be configured in `settings.yml`, globally and/or per directory. When a command needs a session and `CTX_ID` is unset, the most specific `default_sessions` path containing the working directory wins, then `default_session`; `CTX_ID` always takes precedence over both:
-  ```yaml
-  default_session: main
-  default_sessions:
-    /Users/me/git/ctx: ctx-dev
-    /Users/me/git/blog: blog
-  ```
-- HTTP MCP defaults and authentication can also be configured in `settings.yml`:
-  ```yaml
-  mcp_http_addr: 127.0.0.1:7331
-  mcp_http_path: /ctx-mcp
-  mcp_server_name: ctx
-  mcp_oauth_client_id: claude
-  mcp_oauth_client_secret: long-random-secret
-  ```
-  Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
-- To use a remote ctx MCP server as the backend instead of a local sqlite db, set `remote_mcp_url` (and `remote_mcp_token` if the server requires a bearer token) in `settings.yml`:
-  ```yaml
-  remote_mcp_url: http://ctx-host:7331/mcp
-  remote_mcp_token: long-random-secret
-  ```
-  Every `ctx` command then talks to that server's `tools/call` endpoint instead of a local db. `ctx rm` and `ctx set --path` are not supported yet over a remote backend (the MCP protocol has no tool for them).
+`ctx` is configured through a YAML settings file at `$HOME/.config/ctx/settings.yml` (created on first write; every setting has a working default, so only add the keys you need to change). It covers things like the database and trigger locations, default sessions, the HTTP MCP server's address and authentication, and pointing the CLI at a remote ctx backend. Keep the file private when it contains secrets — new settings files created by `ctx` use owner-only permissions.
+
+For the full, up-to-date list of settings with defaults and examples, see [`skills/ctx-settings/SKILL.md`](skills/ctx-settings/SKILL.md).
 
 ## Core Commands
 
