@@ -169,7 +169,7 @@ body. Full syntax, every field: [`skills/create-workflow/trigger-documentation.m
 For the design judgement behind a workflow — what one unit of work is,
 whether it deserves its own trigger chain, how to name the entries it writes
 — see the [`create-workflow`](skills/create-workflow/SKILL.md) skill, and
-`examples/` for complete, working ones.
+`examples/` for complete, working examples.
 
 ## Webhooks
 
