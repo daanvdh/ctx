@@ -40,19 +40,6 @@ max_trigger_depth: 5
 max_string_bytes: 512000
 ```
 
-## Remote backend settings
-Configure these to make the CLI operate against a remote ctx MCP server instead of the local sqlite database. When `remote_mcp_url` is set, `db_path` is ignored.
-
-```yaml
-# URL of a remote ctx MCP server to use as the backend instead of the local
-# sqlite db. Default: "" (use the local sqlite db at db_path)
-remote_mcp_url: http://ctx-host:7331/mcp
-
-# Bearer token sent with requests to remote_mcp_url, if that server requires
-# one. Default: ""
-remote_mcp_token: long-random-secret
-```
-
 ## MCP server settings
 These configure `ctx serve --http`, which makes the command line tool available to external applications over an MCP (Model Context Protocol) server. Each has a corresponding `ctx serve` flag and, for the OAuth/token fields, an environment variable that takes precedence over both the flag and the setting (`CTX_MCP_CLIENT_ID`, `CTX_MCP_CLIENT_SECRET`, `CTX_MCP_TOKEN`, `CTX_MCP_PUBLIC_URL`).
 
@@ -77,7 +64,7 @@ mcp_token: ""
 # OAuth client ID for clients that authenticate via OAuth (e.g. Claude).
 # Required together with mcp_oauth_client_secret to enable OAuth.
 # Default: ""
-mcp_oauth_client_id: claude
+mcp_oauth_client_id: user1
 
 # OAuth client secret paired with mcp_oauth_client_id. Default: ""
 mcp_oauth_client_secret: long-random-secret
@@ -86,4 +73,17 @@ mcp_oauth_client_secret: long-random-secret
 # URLs when the server sits behind a reverse proxy that doesn't forward the
 # original host. Default: "" (inferred from the incoming request)
 mcp_public_url: ""
+```
+
+## Remote backend settings
+Configure these to make the CLI operate against a remote ctx MCP server instead of the local sqlite database. When `remote_mcp_url` is set, `db_path` is ignored.
+
+```yaml
+# URL of a remote ctx MCP server to use as the backend instead of the local
+# sqlite db. Default: "" (use the local sqlite db at db_path)
+remote_mcp_url: http://ctx-host:7331/mcp
+
+# Bearer token sent with requests to remote_mcp_url, if that server requires
+# one. Should match the mcp_token of the settings for the server. Default: ""
+remote_mcp_token: "my-bearer-token"
 ```
