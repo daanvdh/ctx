@@ -102,7 +102,7 @@ Trigger bodies with no markers still parse the same way: the whole body becomes 
 
 **`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. A schedule-driven trigger never fires on writes (and `any-change` can't be combined with it).
 
-A running `ctx serve --http` or bare `ctx serve` (see the main README's MCP Server POC section) polls every `schedule`-bearing trigger roughly every 30 seconds and fires each one at most once per matching cron minute:
+A running `ctx serve --http` or bare `ctx serve` (see [`MCP_SERVER.md`](../../MCP_SERVER.md)) polls every `schedule`-bearing trigger roughly every 30 seconds and fires each one at most once per matching cron minute:
 
 ```yaml
 schedule: "*/15 * * * *"   # every 15 minutes
