@@ -45,8 +45,8 @@ func TestMigrationRecordsSchemaVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("schema version = %d, want 5", version)
+	if version != 6 {
+		t.Fatalf("schema version = %d, want 6", version)
 	}
 }
 
@@ -137,6 +137,93 @@ func TestClaimTriggerScheduleConcurrentClaimsOnlyOneWins(t *testing.T) {
 	}
 	if wins != 1 {
 		t.Fatalf("wins = %d, want exactly 1", wins)
+	}
+}
+
+func TestMarkTriggerRunningFirstCallSucceeds(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_running.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	if _, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil {
+		t.Fatalf("ClaimTriggerSchedule error: %v", err)
+	}
+
+	started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", dueAt, time.Hour)
+	if err != nil {
+		t.Fatalf("MarkTriggerRunning error: %v", err)
+	}
+	if !started {
+		t.Fatal("started = false, want true for first mark")
+	}
+}
+
+func TestMarkTriggerRunningWhileAlreadyRunningFails(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_running.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	if _, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil {
+		t.Fatalf("ClaimTriggerSchedule error: %v", err)
+	}
+	if started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", dueAt, time.Hour); err != nil || !started {
+		t.Fatalf("first mark: started=%v err=%v, want true, nil", started, err)
+	}
+
+	later := dueAt.Add(time.Minute)
+	if started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", later, time.Hour); err != nil {
+		t.Fatalf("second mark error: %v", err)
+	} else if started {
+		t.Fatal("second mark succeeded while still running, want false")
+	}
+}
+
+func TestMarkTriggerFinishedAllowsReclaim(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_running.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	if _, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil {
+		t.Fatalf("ClaimTriggerSchedule error: %v", err)
+	}
+	if started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", dueAt, time.Hour); err != nil || !started {
+		t.Fatalf("first mark: started=%v err=%v, want true, nil", started, err)
+	}
+	if err := s.MarkTriggerFinished(ctx, "/triggers/poll.md"); err != nil {
+		t.Fatalf("MarkTriggerFinished error: %v", err)
+	}
+
+	later := dueAt.Add(time.Minute)
+	if started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", later, time.Hour); err != nil {
+		t.Fatalf("mark after finish error: %v", err)
+	} else if !started {
+		t.Fatal("mark after finish failed, want true")
+	}
+}
+
+func TestMarkTriggerRunningReclaimsStaleMarker(t *testing.T) {
+	tmp := t.TempDir()
+	s := NewSQLite(filepath.Join(tmp, "test_running.db"))
+	ctx := context.Background()
+	dueAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	if _, err := s.ClaimTriggerSchedule(ctx, "/triggers/poll.md", dueAt); err != nil {
+		t.Fatalf("ClaimTriggerSchedule error: %v", err)
+	}
+	if started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", dueAt, time.Hour); err != nil || !started {
+		t.Fatalf("first mark: started=%v err=%v, want true, nil", started, err)
+	}
+
+	// No MarkTriggerFinished call, simulating a crashed process. Past
+	// staleAfter, the marker should be reclaimable.
+	pastStale := dueAt.Add(2 * time.Hour)
+	if started, err := s.MarkTriggerRunning(ctx, "/triggers/poll.md", pastStale, time.Hour); err != nil {
+		t.Fatalf("mark past stale error: %v", err)
+	} else if !started {
+		t.Fatal("mark past stale window failed, want true (reclaimed)")
 	}
 }
 
