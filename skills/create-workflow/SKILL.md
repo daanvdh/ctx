@@ -6,20 +6,34 @@ description: Design a ctx workflow (trigger files chaining a deterministic scrip
 # Writing a ctx workflow
 
 A workflow is one or more ctx trigger files: a script (deterministic) plus the
-prompt(s) it hands an agent, chained by writes. Trigger syntax lives in
-[trigger-documentation.md](trigger-documentation.md), read both before writing 
-anything.
+prompt(s) it hands an agent, chained by writes. Read the trigger documentation from: 
+[trigger-documentation.md](trigger-documentation.md).
 
 Agent work should be organized in sessions, possibly containing child sessions 
 if it's a multistep process. Any data that should be passed to the agent should 
 be put in the session context using `ctx set [session] <key> <value>`. These values 
-should be inserted in the prompt using `My value is $<key>`. 
+should be inserted in the prompt using `My value is $<key>`. Anything that can be 
+done deterministically in the script should be executed in the script. Don't give 
+agents tasks to handle git or read files, instead prepare the prompt so that all 
+that information is included. Use `ctx set [session] <key> --path <absolute-path>` 
+for files that are already in the file system, for instance when you need to insert 
+any file content to a prompt. Ctx will insert the file content, not the path, 
+whenever this entry is referenced. 
 
 If it's unclear what one unit of work is, where the list of units comes from,
 or what happens when one fails, ask before proposing a design; otherwise go
 straight to one.
 
-Triggers should be stored in `~/.config/ctx/triggers`. 
+Default to one workflow. Split into separate workflows, one triggering the next,
+only when a piece would make sense to run standalone outside this task — "run the
+tests" is  useful without "write the code"; step 2 of a 5-step pipeline usually
+isn't.
+
+Name sessions and entries functionally in the context of the task in SCREAMING_SNAKE_CASE.
+
+Triggers are stored in `~/.config/ctx/triggers`. Make sure the triggers are run if 
+possible, to find any errors before finishing. Triggers can be executed using 
+`ctx trigger <trigger-name>`. 
 
 | Command                                                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 |-----------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -30,13 +44,3 @@ Triggers should be stored in `~/.config/ctx/triggers`.
 | `ctx trigger [session] <template>` (alias: `ctx execute`) | Fire a trigger template from the trigger directory. The filename extension is optional.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `CTX_ID=<session>`                                        | Set the session ID for the following commands. Set it to prevent having to provide the session each command.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-## Splitting workflows
-
-Default to one workflow, however many trigger files it takes to chain its
-steps. Split into separate workflows, one triggering the next, only when a
-piece would make sense run standalone outside this task — "run the tests" is
-useful without "write the code"; step 2 of a 5-step pipeline usually isn't.
-
-Name sessions and entries functionally, in ctx's own casing convention
-(`TASK`, `REVIEW`), not by position, type, or general code style — so
-`ctx list`/`ctx tree` reads like the task when someone is debugging it.

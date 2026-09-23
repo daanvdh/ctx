@@ -16,6 +16,8 @@ script: |
               nodes {
                 id
                 isResolved
+                path
+                line
                 comments(first: 50) {
                   nodes { url body author { login } }
                 }
@@ -30,12 +32,27 @@ script: |
           | select(any(.comments.nodes[]; .author.login == $author))
           | {
               thread_id: .id,
+              path: .path,
+              line: .line,
               body: ([.comments.nodes[] | select(.author.login == $author)] | last | .body),
               url: ([.comments.nodes[] | select(.author.login == $author)] | last | .url)
             }
         ')
 
     [ -z "$ROWS" ] && continue
+
+    # One worktree per PR, checked out on a local branch of the same name tracking 
+    # the PR's own origin branch. Every thread on this PR shares it: 10-scan.md 
+    # reads files from it, 20-fix.md edits, commits, and pushes from it.
+    BRANCH=$(gh pr view "$PR" --json headRefName -q .headRefName)
+    FIX_WORKTREE="/tmp/ctx-pr-comments-$(basename "$REPO_DIR")-pr-$PR.worktree"
+
+    git fetch origin "$BRANCH" -q
+    if [ -d "$FIX_WORKTREE" ]; then
+      git -C "$FIX_WORKTREE" reset --hard "origin/$BRANCH" -q
+    else
+      git worktree add -q -B "$BRANCH" "$FIX_WORKTREE" "origin/$BRANCH"
+    fi
 
     echo "$ROWS" | while IFS= read -r ROW; do
       [ -z "$ROW" ] && continue
@@ -47,10 +64,18 @@ script: |
       # this idempotent across scan ticks: a thread already being worked
       # (or already resolved-but-not-yet-cleaned-up) is simply skipped.
       if ctx session pr-comments "$SESSION" >/dev/null 2>&1; then
+        FILE_NAME=$(printf '%s' "$ROW" | jq -r '.path')
+        mkdir -p "$(dirname "$FIX_WORKTREE/$FILE_NAME")"
+        [ -f "$FIX_WORKTREE/$FILE_NAME" ] || touch "$FIX_WORKTREE/$FILE_NAME"
+
         ctx set "$SESSION" PR_NUMBER "$PR"
         ctx set "$SESSION" THREAD_ID "$THREAD_ID"
         ctx set "$SESSION" COMMENT_URL "$(printf '%s' "$ROW" | jq -r '.url')"
         ctx set "$SESSION" COMMENT_BODY "$(printf '%s' "$ROW" | jq -r '.body')"
+        ctx set "$SESSION" FILE_NAME "$FILE_NAME"
+        ctx set "$SESSION" LINE "$(printf '%s' "$ROW" | jq -r '.line')"
+        ctx set "$SESSION" FIX_WORKTREE "$FIX_WORKTREE"
+        ctx set "$SESSION" FILE_CONTENT --path "$FIX_WORKTREE/$FILE_NAME"
         ctx set "$SESSION" TASK started
       fi
     done

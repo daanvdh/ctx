@@ -19,22 +19,24 @@ a dedicated child session and starts a chain in it:
 
 | File | Fires on | Does |
 |---|---|---|
-| `10-scan.md` | cron, every minute | Lists open PRs, finds unresolved review threads with a comment from `$AUTHOR`, creates one child session per new thread (`pr-comment-<hash>`) and writes `TASK` to start it |
-| `20-fix.md` | `TASK` written | Checks out the PR branch, runs `opencode run --auto` with the comment as the prompt, pushes what OpenCode committed, writes `COMMIT_HASH` |
+| `10-scan.md` | cron, every minute | Lists open PRs, finds unresolved review threads with a comment from `$AUTHOR`, creates one child session per new thread (`pr-comment-<hash>`), maintains one `git worktree` per PR checked out on a local branch tracking the PR's own origin branch so the commented-on file can be referenced with `ctx set --path`, and writes `TASK` to start it |
+| `20-fix.md` | `TASK` written | In that PR's worktree, runs `opencode run --auto` with the comment and the affected file as the prompt, then commits (with a message from a separate `opencode run` call), pushes, and writes `COMMIT_HASH` |
 | `30-comment.md` | `COMMIT_HASH` written | Replies on the review thread with the commit hash and resolves it |
 | `40-recover.md` | `AGENT_ERROR` written | A `20-fix` run failed or timed out — replies on the thread flagging it for manual attention, sets `STATUS=FAILED` |
 
 Each thread gets a session name derived from a hash of its GraphQL thread
 ID, so re-running the scan is idempotent: `ctx session` fails for a thread
 that's already being worked (or already finished), and the scan just moves
-on. `20-fix.md` takes an `mkdir`-based lock around the checkout so two
-threads fixed at the same time never race on the same working copy.
+on. Every thread on a given PR shares that PR's worktree, so `20-fix.md`
+takes an `mkdir`-based lock scoped to it, keyed off the worktree path —
+two threads on the same PR fixed at the same time never race on it, while
+threads on different PRs run in parallel.
 
 ## Setup
 
 Prerequisites: `gh` authenticated against the repo (with permission to
 comment and resolve review threads), `jq`, and `opencode` installed and
-authenticated.
+authenticated (the default model is used).
 
 ```bash
 # 1. Point ctx at these triggers
@@ -73,3 +75,8 @@ launchd/systemd unit or a detached background process).
 - **Single page of threads/comments.** `10-scan.md` fetches up to 100
   review threads and 50 comments per thread per PR without pagination —
   plenty for normal use, but a very large PR could exceed it.
+- **Worktrees aren't cleaned up.** `10-scan.md` creates each PR's worktree
+  under `/tmp` on first sight and keeps reusing it (`10-scan.md` only
+  lists open PRs, so nothing ever removes it once one closes or merges).
+  Clean up manually with `git worktree remove` (or `prune`) in
+  `$REPO_DIR` for PRs you're done with.
