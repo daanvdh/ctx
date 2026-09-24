@@ -1289,6 +1289,38 @@ func TestRunDueSchedulesReclaimsStaleRunningMarker(t *testing.T) {
 	}
 }
 
+func TestRunDueSchedulesReclaimsStaleRunningMarkerBeforeMaxRunAgeWhenTimeoutDeclared(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	triggerDir := filepath.Join(home, ".config", "ctx", "triggers")
+	if err := os.MkdirAll(triggerDir, 0o755); err != nil {
+		t.Fatalf("mkdir triggers: %v", err)
+	}
+	trigger := "schedule: \"*/15 * * * *\"\nexecution-session: out\nlogging: true\ntimeout: 5m\nscript: /bin/echo\n---\nCheck poll"
+	if err := os.WriteFile(filepath.Join(triggerDir, "poll.md"), []byte(trigger), 0o644); err != nil {
+		t.Fatalf("write trigger: %v", err)
+	}
+
+	fake := &fakeStore{}
+	a := NewWithStore(fake)
+
+	triggerPath := filepath.Join(triggerDir, "poll.md")
+	due := time.Date(2026, 3, 5, 13, 30, 0, 0, time.UTC)
+	// A run marked in progress 10 minutes ago is impossible to still be
+	// legitimately running for a trigger with timeout: 5m — it can only mean
+	// the process that set the marker died before clearing it. That's well
+	// under maxScheduleRunAge (24h), so this only fires if the per-trigger
+	// timeout is honored instead of the flat backstop.
+	fake.running = map[string]time.Time{triggerPath: due.Add(-10 * time.Minute)}
+
+	if err := a.runDueSchedules(context.Background(), fake, due); err != nil {
+		t.Fatalf("runDueSchedules error: %v", err)
+	}
+	if len(fake.values) == 0 {
+		t.Fatal("expected trigger to fire once its stale running marker was reclaimed using its own timeout")
+	}
+}
+
 func TestRunDueSchedulesFiresPerMatchingSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

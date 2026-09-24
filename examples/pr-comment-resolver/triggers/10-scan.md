@@ -47,11 +47,15 @@ script: |
     BRANCH=$(gh pr view "$PR" --json headRefName -q .headRefName)
     FIX_WORKTREE="/tmp/ctx-pr-comments-$(basename "$REPO_DIR")-pr-$PR.worktree"
 
-    git fetch origin "$BRANCH" -q
-    if [ -d "$FIX_WORKTREE" ]; then
-      git -C "$FIX_WORKTREE" reset --hard "origin/$BRANCH" -q
+    git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH" -q || { echo "fetch failed for PR #$PR ($BRANCH)" >&2; continue; }
+    if git -C "$FIX_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      git -C "$FIX_WORKTREE" reset --hard "origin/$BRANCH" -q || { echo "reset failed for PR #$PR worktree" >&2; continue; }
     else
-      git worktree add -q -B "$BRANCH" "$FIX_WORKTREE" "origin/$BRANCH"
+      # Not a valid worktree (never created, or left behind as a plain
+      # directory by a prior failed attempt) — (re)create it from scratch.
+      rm -rf "$FIX_WORKTREE"
+      git worktree prune
+      git worktree add -q -B "$BRANCH" "$FIX_WORKTREE" "origin/$BRANCH" || { echo "worktree add failed for PR #$PR" >&2; continue; }
     fi
 
     echo "$ROWS" | while IFS= read -r ROW; do

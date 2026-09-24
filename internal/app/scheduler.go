@@ -13,7 +13,27 @@ const schedulerInterval = 30 * time.Second
 // before it's treated as stale and cleared for reclaiming. It guards against
 // a crashed ctx serve process wedging a trigger's schedule forever; it's
 // deliberately generous since it should only ever kick in after a crash.
+// Used only for triggers with no declared timeout — see runningMarkerStaleAfter.
 const maxScheduleRunAge = 24 * time.Hour
+
+// runningMarkerGracePeriod is added on top of a trigger's own declared
+// timeout when deciding whether its "running" marker is stale. A run is
+// force-killed and MarkTriggerFinished is called at or before def.Timeout,
+// so a marker still set well past that can only mean the ctx serve process
+// that set it died before reaching that call — safe to reclaim immediately
+// rather than waiting out the flat maxScheduleRunAge backstop.
+const runningMarkerGracePeriod = 2 * time.Minute
+
+// runningMarkerStaleAfter returns how old def's "running" marker must be
+// before it's reclaimed. Triggers with a declared timeout are bounded by it
+// plus a grace period; triggers with none (timeout: unset, run unbounded)
+// fall back to the generous maxScheduleRunAge crash backstop.
+func runningMarkerStaleAfter(def trigger.Definition) time.Duration {
+	if def.Timeout > 0 {
+		return def.Timeout + runningMarkerGracePeriod
+	}
+	return maxScheduleRunAge
+}
 
 // scheduleClaimer atomically claims a due schedule instant for a trigger, so
 // two ctx serve processes sharing one database can't both fire the same
@@ -90,7 +110,7 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 			continue
 		}
 
-		started, err := claimer.MarkTriggerRunning(ctx, def.Path, now, maxScheduleRunAge)
+		started, err := claimer.MarkTriggerRunning(ctx, def.Path, now, runningMarkerStaleAfter(def))
 		if err != nil {
 			a.logger.Error("serve: mark trigger running failed", "trigger", def.Name, "error", err)
 			continue

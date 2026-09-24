@@ -27,9 +27,7 @@ script: |
   fi
 
   git add -A
-  COMMIT_MSG=$(opencode run --auto "Write a single-line, descriptive git commit message for this staged diff. Output only the commit message, nothing else.
-
-$(git diff --cached)")
+  COMMIT_MSG=$(opencode run --auto "Write a single-line, descriptive git commit message for this staged diff. Output only the commit message, nothing else. Diff: $(git diff --cached)")
   git commit -m "$COMMIT_MSG"
   git push
   ctx set COMMIT_HASH "$(git rev-parse HEAD)"
