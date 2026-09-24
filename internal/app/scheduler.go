@@ -9,13 +9,43 @@ import (
 
 const schedulerInterval = 30 * time.Second
 
+// maxScheduleRunAge bounds how long a trigger's "running" marker is honored
+// before it's treated as stale and cleared for reclaiming. It guards against
+// a crashed ctx serve process wedging a trigger's schedule forever; it's
+// deliberately generous since it should only ever kick in after a crash.
+// Used only for triggers with no declared timeout — see runningMarkerStaleAfter.
+const maxScheduleRunAge = 24 * time.Hour
+
+// runningMarkerGracePeriod is added on top of a trigger's own declared
+// timeout when deciding whether its "running" marker is stale. A run is
+// force-killed and MarkTriggerFinished is called at or before def.Timeout,
+// so a marker still set well past that can only mean the ctx serve process
+// that set it died before reaching that call — safe to reclaim immediately
+// rather than waiting out the flat maxScheduleRunAge backstop.
+const runningMarkerGracePeriod = 2 * time.Minute
+
+// runningMarkerStaleAfter returns how old def's "running" marker must be
+// before it's reclaimed. Triggers with a declared timeout are bounded by it
+// plus a grace period; triggers with none (timeout: unset, run unbounded)
+// fall back to the generous maxScheduleRunAge crash backstop.
+func runningMarkerStaleAfter(def trigger.Definition) time.Duration {
+	if def.Timeout > 0 {
+		return def.Timeout + runningMarkerGracePeriod
+	}
+	return maxScheduleRunAge
+}
+
 // scheduleClaimer atomically claims a due schedule instant for a trigger, so
 // two ctx serve processes sharing one database can't both fire the same
-// trigger for the same due minute. Only *store.SQLite implements it today;
-// a.store not implementing it (e.g. a remote MCP-backed store) means
-// scheduling is unavailable.
+// trigger for the same due minute, and tracks whether a claimed trigger's
+// run is still in progress, so a new due minute doesn't start a second,
+// overlapping run while the previous one hasn't finished. Only *store.SQLite
+// implements it today; a.store not implementing it (e.g. a remote
+// MCP-backed store) means scheduling is unavailable.
 type scheduleClaimer interface {
 	ClaimTriggerSchedule(ctx context.Context, triggerPath string, dueAt time.Time) (bool, error)
+	MarkTriggerRunning(ctx context.Context, triggerPath string, now time.Time, staleAfter time.Duration) (bool, error)
+	MarkTriggerFinished(ctx context.Context, triggerPath string) error
 }
 
 // RunScheduler polls schedule-bearing triggers every schedulerInterval and
@@ -46,10 +76,11 @@ func (a *App) RunScheduler(ctx context.Context) error {
 
 // runDueSchedules checks every schedule-bearing trigger against now and
 // fires each one whose cron expression matches and hasn't already been
-// claimed for now's minute (via claimer). Firing is sequential: schedules
-// are minute-resolution and ticks run every 30s, so one trigger's script
-// briefly delaying the next due trigger in the same tick is an acceptable
-// trade for keeping this straightforward to test and reason about.
+// claimed for now's minute (via claimer), skipping it (with a warning) if
+// its previous run hasn't finished yet. Firing is sequential: schedules are
+// minute-resolution and ticks run every 30s, so one trigger's script briefly
+// delaying the next due trigger in the same tick is an acceptable trade for
+// keeping this straightforward to test and reason about.
 func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now time.Time) error {
 	defs, err := trigger.LoadAll()
 	if err != nil {
@@ -79,14 +110,37 @@ func (a *App) runDueSchedules(ctx context.Context, claimer scheduleClaimer, now 
 			continue
 		}
 
-		for _, sessionID := range a.scheduleTargets(ctx, def) {
-			change := TriggerChange{SessionID: sessionID}
-			if err := a.runTriggers(ctx, []TriggerDefinition{def}, change); err != nil {
-				a.logger.Error("serve: trigger failed", "trigger", def.Name, "error", err)
-			}
+		started, err := claimer.MarkTriggerRunning(ctx, def.Path, now, runningMarkerStaleAfter(def))
+		if err != nil {
+			a.logger.Error("serve: mark trigger running failed", "trigger", def.Name, "error", err)
+			continue
 		}
+		if !started {
+			a.logger.Warn("serve: skipping trigger, previous run still in progress", "trigger", def.Name)
+			continue
+		}
+
+		a.runDueSchedule(ctx, claimer, def)
 	}
 	return nil
+}
+
+// runDueSchedule fires def for each of its schedule targets and clears its
+// running marker afterward, however it finishes, so its next due run isn't
+// skipped as still-running.
+func (a *App) runDueSchedule(ctx context.Context, claimer scheduleClaimer, def TriggerDefinition) {
+	defer func() {
+		if err := claimer.MarkTriggerFinished(ctx, def.Path); err != nil {
+			a.logger.Error("serve: mark trigger finished failed", "trigger", def.Name, "error", err)
+		}
+	}()
+
+	for _, sessionID := range a.scheduleTargets(ctx, def) {
+		change := TriggerChange{SessionID: sessionID}
+		if err := a.runTriggers(ctx, []TriggerDefinition{def}, change); err != nil {
+			a.logger.Error("serve: trigger failed", "trigger", def.Name, "error", err)
+		}
+	}
 }
 
 // scheduleTargets returns the sessions a due schedule trigger fires for.

@@ -5,11 +5,16 @@
 
 **Do more with simpler models.**
 
-Deterministic workflows should run deterministically. Today we let agents do everything, which inflates prompt and orchestration complexity, burns tokens, and sometimes forces a stronger model than the task actually needs.
+Deterministic workflows should run deterministically. 
+Today we let agents do everything, which inflates prompt and orchestration complexity, burns tokens, and sometimes 
+forces a stronger model than the task actually needs.
 
 ***ctx is a key-value store with built-in shell scripting that triggers on context changes.***
 
-ctx brings back control over the workflow while leaving the reasoning to your favorite harness. You select a task for execution; ctx picks up the changed state, creates the branch, pulls the task and project data, and constructs the prompt — all deterministically, no LLM needed. The harness receives a prompt it can reason from immediately, without a single tool call first.
+ctx brings back control over the workflow while leaving the reasoning to your favorite harness. 
+You select a task for execution; ctx picks up the changed state, creates the branch, pulls the task and project data, 
+and constructs the prompt — all deterministically, no LLM needed. The harness receives a prompt it can reason from 
+immediately, without a single tool call first.
 
 Anything you can run from a shell, ctx can run deterministically and add to the context.
 
@@ -54,33 +59,9 @@ go install github.com/daanvdh/ctx@latest
 
 ## Configuration
 
-- By default the database is stored at `$HOME/.config/ctx/ctx.sqlite`. This location can be changed by creating a YAML settings file (`$HOME/.config/ctx/settings.yml`) with a `db_path` field, for example:
-  ```yaml
-  db_path: /tmp/my‑ctx.db
-  ```
-- Trigger templates live in `$HOME/.config/ctx/triggers` by default. Set `trigger_location` in `settings.yml` to use a different directory.
-- A default session can be configured in `settings.yml`, globally and/or per directory. When a command needs a session and `CTX_ID` is unset, the most specific `default_sessions` path containing the working directory wins, then `default_session`; `CTX_ID` always takes precedence over both:
-  ```yaml
-  default_session: main
-  default_sessions:
-    /Users/me/git/ctx: ctx-dev
-    /Users/me/git/blog: blog
-  ```
-- HTTP MCP defaults and authentication can also be configured in `settings.yml`:
-  ```yaml
-  mcp_http_addr: 127.0.0.1:7331
-  mcp_http_path: /ctx-mcp
-  mcp_server_name: ctx
-  mcp_oauth_client_id: claude
-  mcp_oauth_client_secret: long-random-secret
-  ```
-  Keep this file private when it contains secrets. New settings files created by `ctx` use owner-only permissions.
-- To use a remote ctx MCP server as the backend instead of a local sqlite db, set `remote_mcp_url` (and `remote_mcp_token` if the server requires a bearer token) in `settings.yml`:
-  ```yaml
-  remote_mcp_url: http://ctx-host:7331/mcp
-  remote_mcp_token: long-random-secret
-  ```
-  Every `ctx` command then talks to that server's `tools/call` endpoint instead of a local db. `ctx rm` and `ctx set --path` are not supported yet over a remote backend (the MCP protocol has no tool for them).
+`ctx` is configured through a YAML settings file at `$HOME/.config/ctx/settings.yml` (created on first write; every setting has a working default, so only add the keys you need to change). It covers things like the database and trigger locations, default sessions, the HTTP MCP server's address and authentication, and pointing the CLI at a remote ctx backend. Keep the file private when it contains secrets — new settings files created by `ctx` use owner-only permissions.
+
+For the full, up-to-date list of settings with defaults and examples, see [`skills/ctx-settings/SKILL.md`](skills/ctx-settings/SKILL.md).
 
 ## Core Commands
 
@@ -123,97 +104,11 @@ exists, both fail with a clear error.
 `string` values are limited to 500KB. Use `--path` for larger local files
 or for content that should be read fresh each time.
 
-## MCP Server POC
+## MCP Server
 
-`ctx` includes an MCP server proof of concept that exposes the ctx API as MCP
-tools for clients such as Claude Desktop or OpenAI-compatible MCP hosts.
+`ctx` includes an MCP server (proof of concept) that exposes the ctx API as MCP tools for clients such as Claude Desktop or OpenAI-compatible MCP hosts, over stdio or Streamable HTTP.
 
-`ctx serve` has three modes: `--stdio` (MCP over stdio, no scheduler —
-ephemeral, spawned per session by IDEs), `--http` (MCP over Streamable HTTP,
-scheduler always on), and no flag at all (scheduler only, no MCP surface —
-for running `ctx` purely to fire `schedule`-bearing triggers). `--http` and
-`--stdio` are mutually exclusive. See [Trigger Templates](#trigger-templates)
-below for `schedule`-bearing triggers.
-
-Build it:
-
-```bash
-make build
-```
-
-Example client configuration:
-
-```json
-{
-  "mcpServers": {
-    "ctx": {
-      "command": "/absolute/path/to/ctx/bin/ctx",
-      "args": ["serve", "--stdio"]
-    }
-  }
-}
-```
-
-For clients that require a remote MCP URL, run the same binary in Streamable
-HTTP mode and expose it through HTTPS:
-
-```bash
-make build
-./bin/ctx serve --http
-```
-
-In another terminal, publish the local server with a tunnel:
-
-```bash
-tailscale funnel --bg 7331
-```
-
-Use the HTTPS forwarding URL with `/ctx-mcp` appended as the remote MCP server URL,
-for example:
-
-```text
-https://your-mac.your-tailnet.ts.net/ctx-mcp
-```
-
-If `mcp_oauth_client_id` and `mcp_oauth_client_secret` are configured, HTTP MCP
-requests require authorization. `ctx serve --http` exposes the MCP endpoint and
-the minimal OAuth authorization endpoints in the same HTTP process. Use the
-configured client id and secret in clients such as Claude Desktop. The server
-issues opaque bearer tokens after an authorization-code flow with S256 PKCE and
-then requires `Authorization: Bearer <token>` on MCP requests.
-
-For simple clients that can send bearer tokens directly, set `mcp_token` in
-`settings.yml` or `CTX_MCP_TOKEN` in the environment. OAuth credentials can also
-be provided with `CTX_MCP_CLIENT_ID` and `CTX_MCP_CLIENT_SECRET`; environment
-values override settings.
-
-When running behind a tunnel or reverse proxy, `ctx` infers its public URL from
-forwarding headers. If the proxy does not provide them, set `mcp_public_url` to
-the external origin, for example `https://your-mac.your-tailnet.ts.net`.
-
-Publish the whole local HTTP server through the tunnel, not only the MCP path.
-OAuth clients need both `/ctx-mcp` and `/.well-known/...` routes. For Tailscale,
-use `tailscale funnel --bg 7331`, not
-`tailscale funnel --bg http://127.0.0.1:7331/ctx-mcp`.
-
-Available tools:
-
-| Tool | Description |
-|---|---|
-| `ctx_new` | Create a session, optionally with a custom id and parent. |
-| `ctx_set` | Store a value in a session. File references are CLI-only. |
-| `ctx_get` | Get a visible value from a session, shared context, or ancestor. Pass `preview: true` to return the first 10 lines. |
-| `ctx_resolve` | Return all visible key/value pairs as structured data. |
-| `ctx_list` | Return human-readable lines and structured entries including `value_type` and file path status. |
-| `ctx_export` | Return default shell `export` lines, including `CTX_ID`. File references are omitted. |
-| `ctx_share` | Share one session's context into another session. |
-| `ctx_tree` | Render the complete session tree as text or JSON. |
-| `ctx_render` | Render a stored template key with visible context variables. |
-| `ctx_delete` | Delete a session. Fails if it has child sessions unless `recursive` is set. |
-| `ctx_trigger` | Fire a trigger template from the ctx trigger directory. (`ctx_execute` still accepted as an alias.) |
-
-The server uses the same settings and SQLite database as the CLI, so `db_path`
-and `trigger_location` in `$HOME/.config/ctx/settings.yml` apply to both.
+See [`MCP_SERVER.md`](MCP_SERVER.md) for setup, authentication, and the full tool list.
 
 ## Using `CTX_ID`
 
@@ -266,138 +161,15 @@ ctx get $CHILD REPORT                  # prints the file content from the child'
 ctx get $CHILD REPORT --raw            # prints /tmp/report.txt
 ```
 
-## Trigger Templates
+## Trigger Templates & Writing Workflows
 
-Manual templates and automatic triggers use YAML files in the trigger directory. The frontmatter (before the optional `---` separator) is YAML; everything after `---` is the prompt template, rendered and passed to the script as `$CTX_TRIGGER_PROMPT` (see **Multi-variable bodies** below) — reference it explicitly in `script`, nothing is auto-appended.
-
-```yaml
-trigger-session: Issue-1
-order: 0
-script: pi "$CTX_TRIGGER_PROMPT"
-entries:
-  status:
-    - value: PR_CREATED
----
-Analyse and comment on PR $PR_NUMBER:
-
-$STORY
-```
-
-`script` is required. `trigger-session`, `ancestor`, and `entries` are optional matchers. If no matcher is set, the template is only fired manually with `ctx trigger`. Set `any-change: true` to fire on every `ctx` write; it cannot be combined with other matchers.
-
-**`ancestor` matching** – `ancestor: <session>` requires that `<session>` is an ancestor of the triggering session (found by walking its parent chain), based on an exact ID match. It's optional and ANDs with the other matchers; leave it unset to match any ancestor (or none).
-
-```yaml
-ancestor: root
-entries:
-  STATUS:
-    - value: DONE
----
-```
-
-**`entries` matching** – each key in `entries` can have zero or more `value` items:
-- Zero values: wildcard — any write to that key fires the trigger.
-- One value: the key's current value must equal it.
-- Multiple values: logical OR — the current value must equal at least one.
-
-When multiple keys are listed, the trigger fires only when **all** entries satisfy their condition AND the key that was just written is one of the listed entry keys.
-
-```yaml
-entries:
-  STATUS:
-    - value: DONE
-    - value: CANCELLED
-  PRIORITY:             # wildcard — any priority is fine
----
-```
-
-**Multi-line scripts** – use a YAML block literal (`|`) to run the whole block as a single POSIX shell script (via [`mvdan/sh`](https://github.com/mvdan/sh)). `$VAR` placeholders naming a known ctx value are resolved once up front and bound as positional parameters; any other `$VAR` (e.g. one the script assigns itself, like `ID=$(...)`) is left for the shell to resolve natively, so ordinary shell variables persist across the whole script. Use `ctx set` from within the script to persist a value beyond its lifetime.
-
-```yaml
-script: |
-  git checkout main
-  git pull
-  pi "$CTX_TRIGGER_PROMPT"
----
-Summarise recent changes for $PROJECT.
-```
-
-When a trigger fires, ctx renders the prompt from the triggering session, creates a child execution session by default, and sets `CTX_ID` for the invoked script. Use `execution-session: <session>` to run the script with a specific existing session instead.
-
-**Variables in frontmatter** – `execution-session` and `output-entry` may reference ctx values of the triggering session, e.g. `execution-session: $STORY_ID`, rendered when the trigger fires. The built-in `$CTX_TRIGGER_SESSION` names the triggering session itself — `execution-session: $CTX_TRIGGER_SESSION` runs the script (and lands `output-entry`) in the session that fired the trigger; it is also exported to the script's environment. Matcher fields (`trigger-session`, `ancestor`, `entries`) stay literal, and a schedule-driven trigger without filters has no triggering session, so its `execution-session` must be literal.
-
-**Background execution** – `ctx set` from the CLI returns immediately: matching and running triggers happens in a detached `ctx fire-triggers` process (an internal command), so a slow harness never blocks the writer. Within that runner, same-`order` triggers still run in parallel and order groups sequentially, exactly as before. Set `CTX_TRIGGERS_SYNC=1` to wait for triggers in the foreground instead (useful in scripts and CI that must observe the trigger's effect before continuing).
-
-**Timeout** – set `timeout: <duration>` (Go syntax, e.g. `30s`, `10m`) to kill a script that runs too long; the run is recorded as `script timed out after <duration>`. Without it, scripts run unbounded.
-
-**Output capture** – set `output-entry: <KEY>` in the frontmatter to store the script's trimmed stdout under that key in the execution session after a successful run (non-zero exit writes nothing). The write is an ordinary `ctx` write, so it fires downstream triggers — this is the standard way to collect harness output and chain the next step:
-
-```yaml
-entries:
-  STATUS:
-    - value: REVIEW
-output-entry: REVIEW_RESULT
-script: pi "$CTX_TRIGGER_PROMPT"
----
-Review the change described in $STORY. End with APPROVED or CHANGES_REQUESTED.
-```
-
-**Failure capture** – set `failure-entry: <KEY>` to write a short failure summary (trigger name, exit code, stderr tail) to that key in the execution session when the script fails or times out. Like `output-entry`, it's an ordinary write, so a recovery trigger can fire on it instead of the chain stalling silently.
-
-**Chaining** – a `ctx set` from inside a trigger script fires downstream triggers like any other write, so triggers can chain (build writes `STATUS=FAILED`, a second trigger fires on it). Each nesting level increments `CTX_TRIGGER_DEPTH`; past the depth limit (default 5, configurable with `max_trigger_depth` in `settings.yml`) writes stop firing triggers, so accidental loops terminate. Set `CTX_SUPPRESS_TRIGGERS=1` in a script for writes that should never fire anything.
-
-**Logging** – set `logging: true` in the frontmatter to write a JSON audit record under `trigger_log_<trigger-name>_<timestamp>` (a valid shell variable name, so `ctx export` can expose it) in the triggering session for every run. Logging is off by default; script failures are still reported on stderr.
-
-**Multi-variable bodies** – a body can be split into named blocks with `<!-- ctx:var NAME -->` markers. Each marker starts a new block running until the next marker (or EOF); surrounding blank lines are trimmed. Content before the first marker (or the whole body, if there are no markers) becomes `CTX_TRIGGER_PROMPT`. Every block, `$VAR`-rendered against the triggering session's values, is exported as an environment variable of the same name to the script — the script decides how and where to use each one, nothing is auto-appended. A variable defined this way takes precedence over a ctx-session value of the same name.
-
-```yaml
-script: opencode run --agents "$CTX_AGENTS" --prompt "$CTX_PROMPT"
----
-<!-- ctx:var CTX_AGENTS -->
-## planner
-tools: [read, grep]
-Break the task into steps, hand off to coder.
-
-## coder
-tools: [edit, bash]
-Implement each step. Run tests after each change.
-
-<!-- ctx:var CTX_PROMPT -->
-Coordinate planner → coder to fix the failing tests in this PR.
-```
-
-Trigger bodies with no markers still parse the same way: the whole body becomes `CTX_TRIGGER_PROMPT`. Existing trigger files that relied on the old implicit trailing-argument behavior now need `script` to reference `"$CTX_TRIGGER_PROMPT"` explicitly, as in the examples above.
-
-**`schedule` matching** – `schedule: "<cron expression>"` fires the trigger on a time schedule instead of a `ctx` write. It uses the standard 5-field cron format (`minute hour day-of-month month day-of-week`, e.g. `crontab(5)`, Kubernetes `CronJob`, GitHub Actions): `*` for any value, an exact number, a comma-separated list, or `*/N` for every Nth unit. A schedule-driven trigger never fires on writes (and `any-change` can't be combined with it).
-
-A running `ctx serve --http` or bare `ctx serve` (see [MCP Server POC](#mcp-server-poc)) polls every `schedule`-bearing trigger roughly every 30 seconds and fires each one at most once per matching cron minute:
-
-```yaml
-schedule: "*/15 * * * *"   # every 15 minutes
-execution-session: watch
-script: pi "$CTX_TRIGGER_PROMPT"
----
-Check for updates on $PROJECT.
-```
-
-`schedule` can be combined with the `trigger-session`, `ancestor`, and `entries` filters. On each matching tick, every session whose *current state* satisfies all filters becomes a triggering session, and the trigger fires once per matching session — so one cron trigger can poll every active task session. An `entries` key with no values means "the key must be visible in that session"; with values, the current value must equal one of them. Without filters, `execution-session` is required (there is no triggering session otherwise) and must be literal:
-
-```yaml
-schedule: "*/5 * * * *"
-entries:
-  STATUS:
-    - value: WATCHING
-script: check-upstream "$PROJECT" && ctx set STATUS CHANGED
----
-```
-
-Scheduled triggers are meant to stay narrowly scoped — poll something external and write the result into context — with a separate, ordinary transition-based trigger reacting to that write (e.g. "a PR was created, review it").
-
-If no persistent `ctx serve` process is running, skip `schedule` entirely and point OS cron directly at a schedule-less trigger instead — no `ctx`-side due-checking needed:
-
-```
-* * * * * ctx trigger <session> <template>
-```
+Manual templates and automatic triggers are YAML files in the trigger
+directory: frontmatter (matchers, script, timeouts, chaining) plus a prompt
+body. Full syntax, every field: [`skills/create-workflow/trigger-documentation.md`](skills/create-workflow/trigger-documentation.md).
+For the design judgement behind a workflow — what one unit of work is,
+whether it deserves its own trigger chain, how to name the entries it writes
+— see the [`create-workflow`](skills/create-workflow/SKILL.md) skill, and
+`examples/` for complete, working examples.
 
 ## Webhooks
 
